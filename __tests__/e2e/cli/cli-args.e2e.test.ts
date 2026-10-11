@@ -614,6 +614,16 @@ describe("review fixes for #881", () => {
     assertCleanError(result, "--oss leaves this one unconnected");
   });
 
+  it("points `policies add -c` at the lane that takes it, and the shared help says which lane that is", () => {
+    const add = runCli("policies", "add", "-c", "./guards.mjs");
+    assertCleanError(add, "Unknown flag: -c.");
+    expect(add.stderr).toContain("failproofai policies --install -c <file>");
+    expect(add.stderr).not.toContain("policies add --help");
+    const help = runCli("policies", "--help");
+    expect(help.stdout).toMatch(/-c, --custom <file> +With --install, add a custom policy file \(repeatable\)/);
+    expect(help.stdout).toContain("--uninstall -c removes every custom policy file");
+  });
+
   it("refuses --machine-label with --agents and no key when nobody is at a prompt", () => {
     const result = runCli("config", "--agents", "claude", "--machine-label", "prod-01");
     assertCleanError(result, "this one is not connected");

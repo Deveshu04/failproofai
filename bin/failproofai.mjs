@@ -404,7 +404,8 @@ async function runCli() {
       ["", "hermes, openclaw, factory, devin, antigravity, goose"],
       ["--scope <scope>", "user, project, local (default user); all when removing"],
       ["--beta", "Include beta policies"],
-      ["-c, --custom <file>", "Add custom policy files (repeatable); -u -c clears all"],
+      ["-c, --custom <file>", "With --install, add a custom policy file (repeatable)"],
+      ["", "--uninstall -c removes every custom policy file"],
       ["--releases", "With show: list its releases, and which one is here"],
     ],
     examples: [
@@ -1452,7 +1453,17 @@ async function runCli() {
     const knownFlags = new Set(["--scope", "--cli", "--beta"]);
     const unknownFlag = rest.find((a) => a.startsWith("-") && !knownFlags.has(a));
     if (unknownFlag) {
-      throw new CliError(`Unknown flag: ${unknownFlag}.\nRun  \`failproofai policies ${action} --help\`  for usage.`);
+      // -c is on the shared help page, for --install and --uninstall; pointing
+      // back at that page answered the question with itself.
+      const custom = unknownFlag === "-c" || unknownFlag === "--custom";
+      throw new CliError(
+        `Unknown flag: ${unknownFlag}.\n` +
+          (custom
+            ? action === "add"
+              ? "Add a custom policy file with  `failproofai policies --install -c <file>`"
+              : "Remove custom policy files with  `failproofai policies --uninstall -c`"
+            : `Run  \`failproofai policies ${action} --help\`  for usage.`),
+      );
     }
 
     // Positional policy names = anything not consumed by --scope / --cli.

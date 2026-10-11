@@ -137,3 +137,44 @@ describe("nearestName — an agent id", () => {
     expect(nearestName("", INTEGRATION_TYPES)).toBeNull();
   });
 });
+
+describe("a negated word never gets the command it negates", () => {
+  // `uninstall` is two edits from `install` and `unpause` two from `pause`,
+  // inside the cut-off for words that long — so before these were pinned, a
+  // request to take hooks out was answered with `policies --install`, and a
+  // request to end a pause with `config --pause`.
+  it("answers --uninstall and -u with --uninstall, never --install", () => {
+    expect(suggestFlag("--uninstall")).toBe("failproofai policies --uninstall");
+    expect(suggestFlag("-u")).toBe("failproofai policies --uninstall");
+    expect(suggestFlag("--install")).toBe("failproofai policies --install");
+  });
+
+  it("answers unpause with --resume, never --pause", () => {
+    expect(suggestCommand("unpause", SUBCOMMANDS)).toBe("failproofai config --resume");
+    expect(suggestFlag("--unpause")).toBe("failproofai config --resume");
+    expect(suggestCommand("pause", SUBCOMMANDS)).toBe("failproofai config --pause");
+    expect(suggestFlag("--pause")).toBe("failproofai config --pause");
+  });
+
+  it.each([
+    ["--deinstall", "--install"],
+    ["--disinstall", "--install"],
+    ["--unresume", "--resume"],
+    ["--unstatus", "--status"],
+  ])("refuses a fuzzy match from %s to its opposite %s", (typed, opposite) => {
+    expect(suggestFlag(typed) ?? "").not.toContain(opposite);
+  });
+
+  it.each([
+    ["depause", "--pause"],
+    ["unresume", "--resume"],
+    ["unsetup", "failproofai config"],
+  ])("refuses a fuzzy match from the word %s to %s", (typed, opposite) => {
+    expect(suggestCommand(typed, SUBCOMMANDS) ?? "").not.toContain(opposite);
+  });
+
+  it("still finds a plain typo of a word that happens to start with a prefix", () => {
+    expect(suggestCommand("disconect", SUBCOMMANDS)).toBe("failproofai config --disconnect");
+    expect(suggestCommand("unistall", SUBCOMMANDS)).toBe("failproofai uninstall");
+  });
+});

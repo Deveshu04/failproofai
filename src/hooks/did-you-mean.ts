@@ -7,7 +7,9 @@
  *      command that does what they meant: `status` is `config --status`, not
  *      `flush`. The nearest-spelling guess used to answer `status` with
  *      `flush` and `install` with `uninstall` — the opposite of the request.
- *   2. The nearest real subcommand by spelling, for a typo of one.
+ *   2. The nearest real subcommand by spelling, for a typo of one. A word
+ *      that is a candidate with `un`/`de`/`dis` added or removed is never its
+ *      match: `unpause` is two edits from `pause` and means the opposite.
  *
  * Both are matched within a distance cut-off, so a typo of a table word still
  * finds it (`statsu` → `config --status`), and a word that is close to nothing
@@ -24,6 +26,8 @@ const WORD_INTENTS: Readonly<Record<string, string>> = {
   whoami: "failproofai config --status",
   pause: "failproofai config --pause",
   resume: "failproofai config --resume",
+  // Docker's word for it. Two edits from `pause`, which is the opposite.
+  unpause: "failproofai config --resume",
   login: "failproofai config",
   signin: "failproofai config",
   "sign-in": "failproofai config",
@@ -59,11 +63,16 @@ const FLAG_INTENTS: Readonly<Record<string, string>> = {
   "--status": "failproofai config --status",
   "--pause": "failproofai config --pause",
   "--resume": "failproofai config --resume",
+  "--unpause": "failproofai config --resume",
   "--token": "failproofai config",
   "--connect": "failproofai config",
   "--disconnect": "failproofai config --disconnect",
   "--install": "failproofai policies --install",
   "-i": "failproofai policies --install",
+  // Two edits from `--install`: without these the nearest spelling answers a
+  // request to take hooks out with the command that puts them in.
+  "--uninstall": "failproofai policies --uninstall",
+  "-u": "failproofai policies --uninstall",
   "--list": "failproofai policies",
   "--all": "failproofai policies --all",
 };
@@ -102,12 +111,24 @@ function typoReach(word: string): number {
   return word.length <= 4 ? 1 : 2;
 }
 
+/** Prefixes that turn a word into its opposite: `unpause`, `deinstall`, `disable`. */
+const NEGATING_PREFIXES = ["un", "de", "dis"] as const;
+
+/**
+ * Whether `a` is `b` with a negating prefix, either way round. Such a pair is
+ * a short edit apart and means the opposite, so it is never a typo match.
+ */
+function isNegationOf(a: string, b: string): boolean {
+  return NEGATING_PREFIXES.some((prefix) => a === prefix + b || b === prefix + a);
+}
+
 /**
  * What `word` most likely meant among `candidates` (spelling → command), or
  * null. A word of three letters or more that starts exactly one command's
  * spelling is that command — `back` is `backfill`, though `pack` is nearer by
  * spelling. Otherwise the closest spelling within reach, the earliest one
- * winning a tie.
+ * winning a tie. A word that is a candidate with a negating prefix added or
+ * taken away is never matched to it.
  */
 function nearestOf(word: string, candidates: ReadonlyArray<readonly [string, string]>): string | null {
   if (word.length >= 3) {
@@ -117,6 +138,7 @@ function nearestOf(word: string, candidates: ReadonlyArray<readonly [string, str
   const reach = typoReach(word);
   let best: { to: string; distance: number } | null = null;
   for (const [spelling, to] of candidates) {
+    if (isNegationOf(word, spelling)) continue;
     const distance = typoDistance(word, spelling);
     if (distance <= reach && (best === null || distance < best.distance)) best = { to, distance };
   }

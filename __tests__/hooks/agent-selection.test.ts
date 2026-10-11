@@ -384,7 +384,9 @@ describe("the commands that own or ignore the selection", () => {
     writeSelection({ selected: ["claude", "goose"], seen: ["goose"] });
     await installHooks(undefined, "user", project, false, undefined, undefined, false, ["goose"]);
     const before = readFileSync(configPath(), "utf8");
-    // Exactly uninstall-cli.ts's call.
+    // The shape of uninstall-cli.ts's call, minus its cosmetic `silent`. This
+    // proves removeHooks keeps the selection for those options; that the real
+    // command still passes them is pinned in uninstall-cli.test.ts.
     await removeHooks(undefined, "all", project, { cli: ["goose"], removeCustomHooks: true, source: "uninstall_command" });
     expect(JSON.parse(readFileSync(goosePlugin(home), "utf8")).hooks).toBeUndefined();
     expect(readFileSync(configPath(), "utf8")).toBe(before);

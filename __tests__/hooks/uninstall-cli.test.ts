@@ -404,3 +404,31 @@ describe("hooks/uninstall-cli — purge leaves nothing behind", () => {
     expect(existsSync(home)).toBe(true);
   });
 });
+
+describe("hooks/uninstall-cli — the agent selection is not uninstall's to change (D2)", () => {
+  it("passes removeHooks exactly these options, with no syncAgentSelection", async () => {
+    // `removeHooks` rewrites the saved agent selection only when asked to with
+    // `syncAgentSelection`. `failproofai uninstall` takes the hooks out and
+    // leaves the selection for the next `failproofai config` to start from, so
+    // the options are pinned whole: adding that flag here (say, while making
+    // "every hook command keep the selection true") must turn this red.
+    const { removeHooks } = await import("../../src/hooks/manager");
+    const { runUninstallCommand } = await import("../../src/hooks/uninstall-cli");
+    const cwd = join(home, "project");
+    const res = await runUninstallCommand({ yes: true, cwd });
+
+    expect(res.exitCode).toBe(0);
+    expect(vi.mocked(removeHooks)).toHaveBeenCalledTimes(1);
+    const [policyNames, scope, passedCwd, options] = vi.mocked(removeHooks).mock.calls[0];
+    expect(policyNames).toBeUndefined();
+    expect(scope).toBe("all");
+    expect(passedCwd).toBe(cwd);
+    expect(options).not.toHaveProperty("syncAgentSelection");
+    expect(options).toEqual({
+      cli: ["claude", "codex"],
+      removeCustomHooks: true,
+      source: "uninstall_command",
+      silent: true,
+    });
+  });
+});

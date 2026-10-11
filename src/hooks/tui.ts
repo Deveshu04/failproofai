@@ -594,7 +594,9 @@ function runPrompt<R>(p: PromptSpec<R>): Promise<R | null> {
           : p.collapsed
             ? p.collapsed(result)
             : [heading, `${c.guide("✓")} ${p.summaryFor(result)}`];
-    repaint(stdout, region, lines);
+    // Not cut: nothing repaints this frame, so it stays in scrollback, where a
+    // cut is permanent — and a summary names agents, hosts and orgs.
+    repaint(stdout, region, lines, { cut: false });
   };
 
   return new Promise<R | null>((resolve) => {
@@ -1208,7 +1210,9 @@ export function promptCloudKey(opts: CloudKeyPromptOptions): Promise<CloudKeyAns
         answer === null
           ? [promptHeading(c, opts.message), c.ink3("cancelled")]
           : (opts.collapsed?.(answer) ?? [promptHeading(c, opts.message)]);
-      repaint(stdout, region, lines);
+      // The last frame, left in scrollback: never cut (see `repaint`). It names
+      // the org and the host the key went to.
+      repaint(stdout, region, lines, { cut: false });
       settled = true;
       restoreTerminal();
       resolve(answer);
@@ -1321,6 +1325,11 @@ export function promptCloudKey(opts: CloudKeyPromptOptions): Promise<CloudKeyAns
         if (enterWaiting) {
           enterWaiting = false;
           if (savedUsable()) return keepSaved();
+          // Enter was pressed on an empty field, and the saved key it waited
+          // for turned out refused: answer it as `submit` answers an empty
+          // field, rather than redrawing as if nothing had been pressed.
+          fieldError = opts.emptyError;
+          refusedOnce = false;
         }
         draw();
       },
@@ -1510,7 +1519,11 @@ function closeSgr(text: string): string {
  *  single-ellipsis cut when it is plain. */
 function fit(cell: string, width: number): string {
   if (visibleWidth(cell) <= width) return cell;
-  return cell.includes(ESC) ? closeSgr(truncate(cell, width)) : ellipsize(cell, width);
+  // A coloured cell is cut on its visible width and still ends on `…`: cut
+  // bare, a shortened `description  ·  observe` lost its tag with nothing to
+  // say any of it was missing.
+  if (cell.includes(ESC)) return width <= 1 ? "…" : `${closeSgr(truncate(cell, width - 1))}…`;
+  return ellipsize(cell, width);
 }
 
 /** Pad a possibly-coloured cell to `width` visible columns. */
@@ -2068,8 +2081,22 @@ export function screenKit(opts: ScreenKitOpts = {}) {
     /** The options column, when the design fixes a wider one than the data needs. */
     optionsCol?: number;
   }): string[] => {
+    // Option descriptions name flags and agent ids (`-u -c`, `goose`), which are
+    // never cut: one too wide for the terminal wraps under its own column
+    // rather than ending on `…`. Usage descriptions are prose, and shorten.
+    const options = (items: Array<[string, string]>, minCol: number): string[] => {
+      const width = Math.max(minCol, ...items.map(([name, desc]) => (desc ? visibleWidth(name) + 2 : 0)));
+      return items.flatMap(([name, desc]) => {
+        if (!desc) return [`${INDENT}${name}`];
+        const lead = `${INDENT}${pad(name, width)}`;
+        const room = cols - visibleWidth(lead);
+        if (!opts.fit || visibleWidth(desc) <= room) return [lead + c.ink2(desc)];
+        const under = " ".repeat(visibleWidth(lead));
+        return wrapAnsi(desc, Math.max(1, room)).map((part, i) => (i === 0 ? lead : under) + c.ink2(part));
+      });
+    };
     const out = [header(spec.name), "", head("Usage"), ...rows(spec.usage)];
-    if (spec.options?.length) out.push("", head("Options"), ...rows(spec.options, spec.optionsCol ?? 0));
+    if (spec.options?.length) out.push("", head("Options"), ...options(spec.options, spec.optionsCol ?? 0));
     if (spec.examples?.length) out.push("", head("Examples"), ...spec.examples.map((e) => `${INDENT}${cmd(e)}`));
     return out;
   };

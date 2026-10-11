@@ -172,15 +172,14 @@ describe("keepAgentSelectionTrue — a removal", () => {
     expect(selectionOnDisk()).toEqual({ selected: ["claude"], seen: ["claude", "goose"] });
   });
 
-  it("without a selection, writes every agent but the removed ones, and seen as detected now", () => {
+  it("without a selection, writes the agents on this machine but the removed ones, and seen as detected now", () => {
     vi.mocked(detectInstalledClis).mockReturnValue(["claude", "goose"]);
     expect(keepAgentSelectionTrue("removed", ["goose"])).toBe(
       "✓ Goose is no longer traced, so failproofai config won't add its hooks back.",
     );
-    expect(selectionOnDisk()).toEqual({
-      selected: INTEGRATION_TYPES.filter((id) => id !== "goose"),
-      seen: ["claude", "goose"],
-    });
+    // Not every agent but Goose: `failproofai config` restores a saved list as
+    // it stands, and would hook all of them, installed or not.
+    expect(selectionOnDisk()).toEqual({ selected: ["claude"], seen: ["claude", "goose"] });
     expect(isAgentTraced("goose")).toBe(false);
     expect(isAgentTraced("claude")).toBe(true);
   });
@@ -313,11 +312,11 @@ describe("policies --uninstall / policies remove all", () => {
     expect(lastPrinted()).toBe("✓ Goose is no longer traced, so failproofai config won't add its hooks back.");
   });
 
-  it("without a selection, writes one that traces every agent but the one removed", async () => {
-    vi.mocked(detectInstalledClis).mockReturnValue(["goose"]);
+  it("without a selection, writes one that traces the agents on this machine but the one removed", async () => {
+    vi.mocked(detectInstalledClis).mockReturnValue(["claude", "goose"]);
     await hookGoose("user");
     await removeHooks(undefined, "user", project, { cli: ["goose"], syncAgentSelection: true });
-    expect(selectionOnDisk()).toEqual({ selected: INTEGRATION_TYPES.filter((id) => id !== "goose"), seen: ["goose"] });
+    expect(selectionOnDisk()).toEqual({ selected: ["claude"], seen: ["claude", "goose"] });
   });
 
   it("`policies remove all --cli goose` takes the hooks out, so it stops tracing too", async () => {

@@ -523,15 +523,19 @@ fn spawn_collector_manager(
                             break;
                         }
                     }
-                    // Re-enabled is a first start too: apply a pending request
-                    // before anything runs, for the reason given above the
-                    // manager's first spawn.
-                    if let Some(request) = take_backfill_request() {
-                        apply_backfill(request);
-                    }
                     // Control falls through to the spawn below. `next_cfg` is
                     // refreshed to whatever re-enabled collection, because THAT
                     // is what the new deployment will be built from.
+                }
+                // Apply a pending request before anything runs, on both paths.
+                // Re-enabled is a first start, for the reason given above the
+                // manager's first spawn. Still enabled, a request can land after
+                // this tick's take: `failproofai config` writes its `added`
+                // request a few ms before the selection that brought us here,
+                // and without this the re-added agent would resume its stale
+                // cursors for one tick before the next one rewound them.
+                if let Some(request) = take_backfill_request() {
+                    apply_backfill(request);
                 }
                 let next_cfg = current_collector_config().unwrap_or(next_cfg);
 

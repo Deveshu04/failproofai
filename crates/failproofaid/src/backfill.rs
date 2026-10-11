@@ -459,10 +459,29 @@ pub fn record_window(kind: Kind, agents: &[&'static str], now: SystemTime) -> u6
 /// it cannot be acted on, and leaving it would repeat the same failure on every
 /// tick forever. Losing a request costs one re-run of a command; looping does not
 /// stop.
+///
+/// Claimed by RENAME, then read, never read-then-delete: the CLI writes this file
+/// from several commands (`backfill`, setup, and every path that traces an agent
+/// again), and a write landing between a read and a delete would be deleted
+/// unread. After the rename, a new write creates a fresh file the next tick takes.
 pub fn take(path: &Path, now: SystemTime) -> Option<Request> {
-    let raw = std::fs::read_to_string(path).ok()?;
-    let _ = std::fs::remove_file(path);
-    match parse(&raw, now) {
+    let claimed = claim(path)?;
+    read_claimed(&claimed, now)
+}
+
+/// Move the request aside, atomically, so nothing written after this is lost.
+fn claim(path: &Path) -> Option<std::path::PathBuf> {
+    let mut name = path.file_name()?.to_os_string();
+    name.push(".claimed");
+    let claimed = path.with_file_name(name);
+    std::fs::rename(path, &claimed).ok()?;
+    Some(claimed)
+}
+
+fn read_claimed(claimed: &Path, now: SystemTime) -> Option<Request> {
+    let raw = std::fs::read_to_string(claimed);
+    let _ = std::fs::remove_file(claimed);
+    match parse(&raw.ok()?, now) {
         Ok(request) => Some(request),
         Err(why @ Discarded::Stale { .. }) => {
             tracing::warn!(reason = %why, "dropping a stale backfill request");
@@ -630,6 +649,36 @@ mod tests {
         assert!(!path.exists(), "a dropped request must not be retried");
 
         assert!(take(&path, now).is_none(), "no file, no request");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_request_written_while_one_is_being_taken_is_kept_for_the_next_tick() {
+        let dir = scratch("take-race");
+        let path = dir.join("backfill-request.json");
+        let now = SystemTime::now();
+
+        std::fs::write(&path, format!(r#"{{"sinceMs":{}}}"#, ms(now - DAY))).unwrap();
+        let claimed = claim(&path).expect("the pending request is claimed");
+        // The CLI writes again after the claim and before the daemon has read it.
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"requestedAtMs":{},"kind":"added","agents":["codex"]}}"#,
+                ms(now)
+            ),
+        )
+        .unwrap();
+
+        let first = read_claimed(&claimed, now).expect("the claimed request is read");
+        assert!(matches!(first.kind, Kind::User { .. }));
+        assert!(!claimed.exists(), "the claimed copy is removed");
+        assert!(path.exists(), "the later write must survive the take");
+
+        let second = take(&path, now).expect("the next tick takes the later write");
+        assert_eq!(second.kind, Kind::Added);
+        assert_eq!(second.agents, Some(vec!["codex".to_string()]));
+        assert!(!path.exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -31,7 +31,6 @@ vi.mock("@/src/hooks/hook-telemetry", async (importOriginal) => {
 import { installHooksWebAction, removeHooksWebAction } from "@/app/actions/install-hooks-web";
 import { detectInstalledClis } from "@/src/hooks/integrations";
 import { readConfig } from "@/src/hooks/fp-config";
-import { INTEGRATION_TYPES } from "@/src/hooks/types";
 
 let root: string;
 let home: string;
@@ -90,13 +89,12 @@ describe("the dashboard's per-agent hook panel", () => {
     expect(readConfig().agents).toEqual({ selected: ["claude"], seen: ["claude", "goose"] });
   });
 
-  it("unticking on a machine with no selection writes one without that agent", async () => {
+  it("unticking on a machine with no selection writes one with this machine's agents but that one", async () => {
     await installHooksWebAction("user", ["goose"]);
     expect(existsSync(configPath())).toBe(false);
     await removeHooksWebAction("user", ["goose"]);
-    expect(readConfig().agents).toEqual({
-      selected: INTEGRATION_TYPES.filter((id) => id !== "goose"),
-      seen: ["claude", "goose"],
-    });
+    // Not every agent but Goose: `failproofai config` restores a saved list as
+    // it stands, and would hook all of them, installed or not.
+    expect(readConfig().agents).toEqual({ selected: ["claude"], seen: ["claude", "goose"] });
   });
 });

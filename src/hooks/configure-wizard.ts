@@ -56,6 +56,7 @@ import {
 } from "./integrations";
 import { INTEGRATION_TYPES, type IntegrationType, type HookScope } from "./types";
 import { enforcingPolicyCount, installHooks, notEnforcingReason } from "./manager";
+import { readInstalledPacks } from "./pack-manifest";
 import { getConfigPathForScope, readScopedHooksConfig } from "./hooks-config";
 import { discoverPolicyFiles, findSkippedPolicyFiles } from "./custom-hooks-loader";
 import { trackHookEvent } from "./hook-telemetry";
@@ -1456,6 +1457,15 @@ function connectDoneLines(
   return [kit.caution(`Not connected: ${outcome.ingest.reason ?? outcome.policy.reason ?? "unknown error"}`, "failproofai config")];
 }
 
+/** Packs that were declared and refused, and deny for it — as the policies listing counts them. */
+function failClosedPacks(): Array<{ id: string | null }> {
+  try {
+    return readInstalledPacks().errors.filter((err) => err.effect !== "observe" && !err.semanticOnly);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * The DONE section: what apply wrote, then whether anything is enforcing — the
  * one generic warning when it is not (decision D18) — and the custom-policy
@@ -1474,15 +1484,34 @@ export function doneLines(
     );
   } else {
     const { count, custom } = enforcingPolicyCount(state.cwd);
-    lines.push(
-      kit.ok(
-        count === 0
-          ? `Your custom policies are enforcing on ${on}.`
-          : custom
-            ? `${count} ${count === 1 ? "policy" : "policies"} and your custom policies are enforcing on ${on}.`
-            : `${count} ${count === 1 ? "policy is" : "policies are"} enforcing on ${on}.`,
-      ),
-    );
+    if (count > 0 || custom) {
+      lines.push(
+        kit.ok(
+          count === 0
+            ? `Your custom policies are enforcing on ${on}.`
+            : custom
+              ? `${count} ${count === 1 ? "policy" : "policies"} and your custom policies are enforcing on ${on}.`
+              : `${count} ${count === 1 ? "policy is" : "policies are"} enforcing on ${on}.`,
+        ),
+      );
+    }
+    // A pack that failed to load fails closed, which is why the machine reads
+    // as enforcing at all when nothing above counted. Said in the words the
+    // policies listing uses, never as custom policies that may not exist.
+    const failed = failClosedPacks();
+    if (failed.length > 0) {
+      const [first] = failed;
+      const many = failed.length > 1;
+      lines.push(
+        kit.fail(
+          `${first.id ?? "A pack"}${many ? ` and ${failed.length - 1} more` : ""} failed to load, ` +
+            `so the calls ${many ? "they cover" : "it covers"} are denied.`,
+          first.id ? `failproofai policies remove ${first.id}` : "failproofai policies",
+        ),
+      );
+    } else if (count === 0 && !custom) {
+      lines.push(kit.ok(`Policies are enforcing on ${on}.`));
+    }
   }
   if (!state.connected) lines.push(`  Connect to cloud any time:  ${kit.cmd("failproofai config")}`);
   for (const warning of describeCustomPolicies(state.cwd).warnings) {

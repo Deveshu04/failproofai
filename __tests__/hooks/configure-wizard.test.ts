@@ -444,6 +444,30 @@ describe("doneLines", () => {
       "✓ Your custom policies are enforcing on 1 agent.",
     );
   });
+
+  it("names a pack that failed to load, and claims no custom policies there are none of", () => {
+    // Enforcing only because the refused pack fails closed: nothing counted,
+    // no custom files.
+    vi.mocked(notEnforcingReason).mockReturnValue(null);
+    vi.mocked(enforcingPolicyCount).mockReturnValue({ count: 0, custom: false });
+    const packDir = mkdtempSync(resolve(tmpdir(), "fpai-wizard-packs-"));
+    vi.stubEnv("FAILPROOFAI_PACK_DIR", packDir);
+    try {
+      writeFileSync(resolve(packDir, "installed.json"), "{not json");
+      const lines = doneLines(kit, { elapsedMs: 1, done: [], cwd: "/x", agents: 3, connected: true });
+      expect(lines.join("\n")).not.toContain("custom policies");
+      expect(lines).toContain("✕ A pack failed to load, so the calls it covers are denied.  ·  failproofai policies");
+
+      // Alongside what does count, it is still said.
+      vi.mocked(enforcingPolicyCount).mockReturnValue({ count: 4, custom: false });
+      const counted = doneLines(kit, { elapsedMs: 1, done: [], cwd: "/x", agents: 3, connected: true });
+      expect(counted).toContain("✓ 4 policies are enforcing on 3 agents.");
+      expect(counted.some((l) => l.startsWith("✕ A pack failed to load"))).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(packDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("doneLines — custom policy files", () => {

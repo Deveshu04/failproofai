@@ -300,7 +300,7 @@ fn with_no_agents_key_every_source_starts() {
     let s = Scratch::new("all");
     s.config(&config(None, ""));
     let daemon = spawn_daemon(&s);
-    daemon.wait_for("collector started tasks=18", 1);
+    daemon.wait_for("collector started tasks=19", 1);
     for source in [
         "claude",
         "claude-subagent",
@@ -337,9 +337,10 @@ fn an_unselected_agent_and_its_extra_paths_never_start() {
     let daemon = spawn_daemon(&s);
 
     // health, hook-activity, claude and claude-subagent with one extra path
-    // each, two Hermes profile databases, and the two delivery tasks. Logged by
-    // the supervisor before any task runs, so it is the whole deployment.
-    daemon.wait_for("collector started tasks=10", 1);
+    // each, two Hermes profile databases, and the three delivery tasks (the
+    // additive SDK OTLP spool included). Logged by the supervisor before any
+    // task runs, so it is the whole deployment.
+    daemon.wait_for("collector started tasks=11", 1);
     daemon.wait_for(&file_source("claude", 0, 7), 2);
     daemon.wait_for(&file_source("claude-subagent", 0, 7), 2);
     daemon.wait_for("sqlite source started source=\"hermes\"", 2);
@@ -370,7 +371,7 @@ fn an_unknown_selected_name_is_warned_about_on_every_build_even_without_sessions
     let warning = "[failproofaid] agents.selected names claud, which has no collector source; \
                    nothing is collected for it. Known: claude, codex, copilot, openclaw, pi, \
                    factory, antigravity, cursor, goose, opencode, devin, hermes";
-    daemon.wait_for("collector started tasks=4", 1);
+    daemon.wait_for("collector started tasks=5", 1);
     daemon.wait_for(warning, 1);
 
     // Once per build: a cycle builds again and says it again.
@@ -392,7 +393,7 @@ fn changing_the_selection_mid_run_cycles_the_right_sources() {
         "",
     ));
     let daemon = spawn_daemon(&s);
-    daemon.wait_for("collector started tasks=6", 1);
+    daemon.wait_for("collector started tasks=7", 1);
     daemon.wait_for(&file_source("claude", 0, 7), 1);
     daemon.wait_for(&file_source("claude-subagent", 0, 7), 1);
     daemon.assert_absent("source=\"codex\"");
@@ -404,7 +405,7 @@ fn changing_the_selection_mid_run_cycles_the_right_sources() {
         "",
     ));
     daemon.wait_for("collector configuration changed; cycling the collector", 1);
-    daemon.wait_for("collector started tasks=5", 1);
+    daemon.wait_for("collector started tasks=6", 1);
     daemon.wait_for(&file_source("codex", 0, 7), 1);
     // The second deployment did not start claude again.
     assert_eq!(
@@ -557,7 +558,7 @@ fn an_agent_re_added_on_a_running_daemon_never_resumes_its_stale_cursors() {
     s.cursors("codex", &[&stale]);
 
     let daemon = spawn_daemon(&s);
-    daemon.wait_for("collector started tasks=6", 1);
+    daemon.wait_for("collector started tasks=7", 1);
 
     let now = SystemTime::now();
     s.request(&format!(

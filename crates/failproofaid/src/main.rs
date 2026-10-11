@@ -2282,6 +2282,8 @@ mod tests {
             "hermes:team",
             "spool-watcher",
             "spool-sweeper",
+            // SDK OTEL batches drain even when the TCP relay is off.
+            "otlp-delivery",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -2314,6 +2316,7 @@ mod tests {
                 "codex:box",
                 "health",
                 "hook-activity",
+                "otlp-delivery",
                 "spool-sweeper",
                 "spool-watcher",
             ],
@@ -2367,7 +2370,13 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            ["health", "hook-activity", "spool-sweeper", "spool-watcher"]
+            [
+                "health",
+                "hook-activity",
+                "otlp-delivery",
+                "spool-sweeper",
+                "spool-watcher"
+            ]
         );
     }
 
@@ -2387,7 +2396,14 @@ mod tests {
     fn every_task_the_collector_builds_has_a_row_in_the_agent_table() {
         // A source missing from the table would be started on every machine
         // with no selection and on none with one — silently either way.
-        let infrastructure = ["health", "hook-activity", "spool-watcher", "spool-sweeper"];
+        let infrastructure = [
+            "health",
+            "hook-activity",
+            "spool-watcher",
+            "spool-sweeper",
+            "otlp-delivery",
+            "otlp-relay",
+        ];
         for name in task_names(&config_with_agents(None), &["prod"]) {
             let source = name.split(':').next().unwrap();
             assert!(

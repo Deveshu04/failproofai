@@ -757,9 +757,42 @@ describe("connect step", () => {
 
   it("refuses an unusable FAILPROOFAI_CLOUD_URL instead of falling back to hosted", async () => {
     process.env.FAILPROOFAI_CLOUD_URL = "http://cloud.example.com";
-    const result = await runConfigureWizard(ttyIO());
-    expect(result.applied).toBe(false);
-    expect(promptCloudKey).not.toHaveBeenCalled();
+    const io = ttyIO();
+    drive({ cloud: OPEN_SOURCE });
+    const result = await runConfigureWizard(io);
+    // Said above the field, which stays open: a typed key is refused there,
+    // without anything being sent anywhere.
+    expect(printed(io.stdout)).toContain('FAILPROOFAI_CLOUD_URL is set to "http://cloud.example.com", which cannot be used');
+    const verdict = await cloudOpts().check!("a-real-looking-key");
+    expect(verdict.ok).toBe(false);
+    expect(introspectKey).not.toHaveBeenCalled();
+    expect(validateIngestKey).not.toHaveBeenCalled();
+    // Tab still finishes setup as open source.
+    expect(result.applied).toBe(true);
+    expect(result.mode).toBe("oss");
+    expect(connectToCloud).not.toHaveBeenCalled();
+  });
+
+  it("does not stop --oss, or a keyless unattended run, over a URL they never use", async () => {
+    process.env.FAILPROOFAI_CLOUD_URL = "http://10.0.0.5:3000";
+    const oss = await runConfigureWizard(headlessIO(), { oss: true });
+    expect(oss).toMatchObject({ applied: true, mode: "oss" });
+    expect(installHooks).toHaveBeenCalledTimes(1);
+    const keyless = await runConfigureWizard(headlessIO());
+    expect(keyless).toMatchObject({ applied: true, mode: "oss" });
+    expect(connectToCloud).not.toHaveBeenCalled();
+  });
+
+  it("fails, not cancels, a --token run whose URL cannot be used", async () => {
+    process.env.FAILPROOFAI_CLOUD_URL = "http://10.0.0.5:3000";
+    for (const io of [headlessIO(), ttyIO()]) {
+      const result = await runConfigureWizard(io, { token: "k".repeat(20) });
+      // Not "cancelled": the CLI exits 0 for that, and nothing was set up.
+      expect(result).toEqual({ applied: false, abort: "bad_cloud_url" });
+    }
+    expect(installHooks).not.toHaveBeenCalled();
+    expect(introspectKey).not.toHaveBeenCalled();
+    expect(connectToCloud).not.toHaveBeenCalled();
   });
 
   it("survives a key revoked between the check and the apply", async () => {
@@ -1052,6 +1085,7 @@ describe("config --token with --url", () => {
   it("refuses an unusable --url rather than connecting somewhere else", async () => {
     const result = await runConfigureWizard(headlessIO(), { token: "k".repeat(20), url: "http://cloud.example.com" });
     expect(result.applied).toBe(false);
+    expect(result.abort).toBe("bad_cloud_url");
     expect(connectToCloud).not.toHaveBeenCalled();
   });
 

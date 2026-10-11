@@ -158,7 +158,9 @@ export type WizardAbort =
   | "unsupported_platform"
   | "running_as_sudo"
   /** A cloud key was supplied and the server refused it. Unattended only. */
-  | "cloud_unverified";
+  | "cloud_unverified"
+  /** A key was supplied on the command line, and --url or FAILPROOFAI_CLOUD_URL cannot be used. */
+  | "bad_cloud_url";
 
 export interface WizardResult {
   applied: boolean;
@@ -900,14 +902,22 @@ export async function runConfigureWizard(
   // checking that it still works.
   const saved = savedConnection();
   const urlChoice = resolveCloudUrl(answers.url, saved?.url);
-  if (!urlChoice.ok) {
-    // Loud, not a silent fall-back to the hosted service: whoever set it wants
-    // THAT endpoint, and reporting the machine elsewhere is what they did not ask.
-    write([kit.fail(urlChoice.message)]);
-    return cancel();
-  }
-  const url = urlChoice.url;
-  const host = hostOf(url);
+  // An unusable --url or FAILPROOFAI_CLOUD_URL is refused loudly, never a silent
+  // fall-back to the hosted service: whoever set it wants THAT endpoint, and
+  // reporting the machine elsewhere is what they did not ask. But only where a
+  // key would be checked or sent. `--oss`, a keyless unattended run and Tab send
+  // nothing, so stopping them over an endpoint they never use set up nothing.
+  const url = urlChoice.ok ? urlChoice.url : undefined;
+  const badUrl = urlChoice.ok ? undefined : urlChoice.message;
+  const host = url ? hostOf(url) : "no usable endpoint";
+  const source = urlChoice.ok ? urlChoice.source : undefined;
+  const refuseUrl = (message: string): WizardResult => {
+    write([kit.head("Connect to cloud"), kit.fail(message)]);
+    void emit("configure_aborted", { reason: "bad_cloud_url" });
+    // A failure, not a cancel: a run that asked to connect and set up nothing
+    // must not exit 0.
+    return { applied: false, abort: "bad_cloud_url" };
+  };
   const machineId = resolveMachineId(answers.machineId);
   const machineLabel = answers.machineLabel ?? saved?.machineLabel ?? resolveMachineLabel();
 
@@ -925,7 +935,7 @@ export async function runConfigureWizard(
       host,
       savedHost: saved ? hostOf(saved.url) : host,
       savedOrg: saved?.org,
-      source: urlChoice.source,
+      source,
     });
 
   const askCloud = (): Promise<CloudKeyAnswer | OpenSource | null> =>
@@ -933,7 +943,7 @@ export async function runConfigureWizard(
       message: "Connect to cloud",
       // Where the key goes, in the heading: the one place somebody can notice
       // they are about to send a key somewhere they did not mean to.
-      meta: urlChoice.source ? `${host}  ·  from ${urlChoice.source}` : host,
+      meta: source ? `${host}  ·  from ${source}` : host,
       tabHint: saved ? "skip" : "use open source instead",
       emptyError: saved ? "Paste a key, or press tab to skip." : "Paste a key, or press tab to use open source.",
       saved: saved
@@ -952,6 +962,8 @@ export async function runConfigureWizard(
           }
         : undefined,
       check: async (key) => {
+        // Kept open, so Tab (or the saved key) still finishes setup.
+        if (!url) return { ok: false, line: badUrl ?? "No usable endpoint." };
         const r = await checkCloudKey(url, key);
         if (r.ok) {
           typedOrg = r.org;
@@ -969,6 +981,9 @@ export async function runConfigureWizard(
     cloud = saved ? { kind: "kept", how: "skip", verified: false } : { kind: "oss" };
     write([...cloudLines(cloud), ""]);
   } else if (answers.token) {
+    // A key on the command line is a request to connect, and there is nowhere
+    // usable to send it.
+    if (!url) return refuseUrl(badUrl ?? "No usable endpoint.");
     const r = await checkCloudKey(url, answers.token);
     if (r.ok) {
       cloud = { kind: "connect", token: answers.token, org: r.org, note: r.note };
@@ -995,6 +1010,8 @@ export async function runConfigureWizard(
     cloud = saved ? { kind: "kept", how: "skip", verified: false } : { kind: "oss" };
     write([...cloudLines(cloud), ""]);
   } else {
+    // Said above the field, which stays usable for Tab and a saved key.
+    if (badUrl) write([kit.fail(badUrl)]);
     const answer = await askCloud();
     if (answer === null) return cancel();
     cloud = planFor(answer);
@@ -1230,7 +1247,7 @@ export async function runConfigureWizard(
   // a key on disk doing nothing. `connectToCloud` re-verifies each capability
   // and writes only what works.
   let connected = false;
-  if (cloud.kind === "connect") {
+  if (cloud.kind === "connect" && url) {
     const token = cloud.token;
     try {
       const outcome = await transient("Connecting…", () =>

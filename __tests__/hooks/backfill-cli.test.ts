@@ -143,3 +143,34 @@ describe("failproofai backfill — traced agents only", () => {
     ]);
   });
 });
+
+describe("failproofai backfill --dry-run — the command it hands over", () => {
+  // The preview showed `since 2026-04-13` and then suggested a bare
+  // `failproofai backfill`, which re-sends the default 30 days instead.
+  const line = (lines: string[]) => lines.find((l) => l.includes("Run it for real")) ?? "";
+
+  it("keeps --since as it was typed", async () => {
+    const r = await run({ dryRun: true, sinceMs: NOW - 180 * DAY, since: "6m" });
+    expect(line(r.lines)).toBe("Run it for real with failproofai backfill --since 6m");
+  });
+
+  it("keeps --since and --agents together", async () => {
+    const r = await run({ dryRun: true, sinceMs: NOW - 365 * DAY, since: "1y", agents: ["codex", "claude"] });
+    expect(line(r.lines)).toBe("Run it for real with failproofai backfill --since 1y --agents claude,codex");
+  });
+
+  it("gives the window as its start date when the typed form is not known", async () => {
+    const r = await run({ dryRun: true, sinceMs: Date.parse("2026-04-13T00:00:00Z") });
+    expect(line(r.lines)).toBe("Run it for real with failproofai backfill --since 2026-04-13");
+  });
+
+  it("quotes a typed date that holds spaces, so the line runs as printed", async () => {
+    const r = await run({ dryRun: true, sinceMs: Date.parse("April 13 2026"), since: "April 13 2026" });
+    expect(line(r.lines)).toBe('Run it for real with failproofai backfill --since "April 13 2026"');
+  });
+
+  it("adds no --since when none was given", async () => {
+    const r = await runBackfillCommand({ now: NOW, countSessions, dryRun: true });
+    expect(line(r.lines)).toBe("Run it for real with failproofai backfill");
+  });
+});

@@ -839,6 +839,7 @@ async function runCli() {
     const { optsFor } = await import("../src/hooks/tui");
     const result = await runBackfillCommand({
       sinceMs,
+      since: sinceIdx >= 0 ? subArgs[sinceIdx + 1] : undefined,
       dryRun: subArgs.includes("--dry-run"),
       agents,
       // Drawn for stdout. A refusal goes to stderr, and printBlock drops the

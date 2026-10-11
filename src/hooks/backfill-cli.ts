@@ -47,6 +47,11 @@ export const DEFAULT_BACKFILL_DAYS = 30;
 export interface BackfillOptions {
   /** Epoch ms. Everything modified at or after this is re-read. */
   sinceMs?: number;
+  /**
+   * `--since` as typed (`6m`, `2026-04-13`), repeated in the dry run's "run it
+   * for real" command. Without it the window is given as the date it began.
+   */
+  since?: string;
   /** Report what would be re-read and write nothing. */
   dryRun?: boolean;
   /** `--agents`: a subset of the traced agents. Unvalidated ids, as typed. */
@@ -192,7 +197,17 @@ export async function runBackfillCommand(opts: BackfillOptions = {}): Promise<Ba
     else if (rows.length === 0) lines.push("  No sessions on disk in this window.");
     else lines.push(...kit.rows(rows, 14));
     if (skipped.length > 0) lines.push(`  Not traced, skipped: ${skipped.join(", ")}`);
-    lines.push("", `Run it for real with ${kit.cmd(opts.agents ? `failproofai backfill --agents ${target.join(",")}` : "failproofai backfill")}`);
+    // Every option the preview was given, or the command it hands over re-sends
+    // a different window: without --since a real run takes the default 30 days.
+    const forReal = ["failproofai backfill"];
+    if (opts.sinceMs !== undefined) {
+      // A date Date.parse reads can hold spaces ("April 13 2026"); quoted, so
+      // the line still runs as printed.
+      const since = opts.since ?? sinceLabel;
+      forReal.push(`--since ${/\s/.test(since) ? `"${since}"` : since}`);
+    }
+    if (opts.agents) forReal.push(`--agents ${target.join(",")}`);
+    lines.push("", `Run it for real with ${kit.cmd(forReal.join(" "))}`);
     return { exitCode: 0, lines };
   }
 

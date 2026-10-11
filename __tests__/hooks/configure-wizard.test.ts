@@ -352,13 +352,15 @@ describe("agentsCollapsedLines", () => {
     const plan = planAgents({ detected: ["claude", "goose"], saved: { selected: ["claude", "goose"], seen: ["claude", "goose"] }, hooked: [] });
     const connected = agentsCollapsedLines(kit, plan, ["claude", "openclaw", "hermes"], true, c).join("\n");
     expect(connected).toContain("✓ Tracing 3 agents");
-    expect(connected).toContain("Added Hermes and OpenClaw.");
-    expect(connected).toContain("Removed Goose: no longer hooked or collected. Sessions already collected are kept.");
+    expect(connected).toContain("Adding Hermes and OpenClaw.");
+    expect(connected).toContain(
+      "Removing Goose: it will no longer be hooked or collected. Sessions already collected are kept.",
+    );
     // No history clause anywhere (decision D7).
     expect(connected).not.toMatch(/days|history/);
     // Open source collects nothing, so it promises nothing about collection.
     const local = agentsCollapsedLines(kit, plan, ["claude"], false, c).join("\n");
-    expect(local).toContain("Removed Goose: no longer hooked.");
+    expect(local).toContain("Removing Goose: it will no longer be hooked.");
     expect(local).not.toContain("collected");
   });
 });

@@ -350,7 +350,7 @@ function wrapAfterGlyph(glyph: string, text: string, width: number): string[] {
 
 /**
  * The AGENTS step, collapsed. Names are listed when nothing changed against
- * the baseline; otherwise the count, then what was added and removed. What a
+ * the baseline; otherwise the count, then what will be added and removed. What a
  * removal promises is only what the code does: no more hooks, and on a
  * connected machine no more collection. Nothing already collected is deleted.
  */
@@ -375,12 +375,15 @@ export function agentsCollapsedLines(
     return lines;
   }
   lines.push(kit.ok(tracing));
-  if (added.length > 0) lines.push(`  Added ${namesList(added)}.`);
+  // The choice, not the result: this prints before apply, and an apply that
+  // stops at the daemon changes nothing (decision D3).
+  if (added.length > 0) lines.push(`  Adding ${namesList(added)}.`);
   if (removed.length > 0) {
+    const they = removed.length === 1 ? "it" : "they";
     lines.push(
       collecting
-        ? `  Removed ${namesList(removed)}: no longer hooked or collected. Sessions already collected are kept.`
-        : `  Removed ${namesList(removed)}: no longer hooked.`,
+        ? `  Removing ${namesList(removed)}: ${they} will no longer be hooked or collected. Sessions already collected are kept.`
+        : `  Removing ${namesList(removed)}: ${they} will no longer be hooked.`,
     );
   }
   return lines;

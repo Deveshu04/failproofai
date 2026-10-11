@@ -339,8 +339,10 @@ export function notEnforcingReason(cwd?: string): NotEnforcingReason | null {
     const installed = readInstalledPacks();
     // A pack that failed to load FAILS CLOSED: the calls it covers are denied,
     // which is the opposite of "not enforcing" (see the doc comment above). An
-    // observe pack that fails does not deny, so it does not count.
-    if (installed.errors.some((error) => error.effect !== "observe")) return null;
+    // observe pack that fails does not deny, so it does not count; neither does
+    // a Jev-checks-only pack, which has nothing in the regex tier to deny on
+    // (pack-failclosed.ts skips it, and so does the listing below).
+    if (installed.errors.some((error) => error.effect !== "observe" && !error.semanticOnly)) return null;
     for (const pack of installed.packs) {
       const taken = pack.enabled ?? pack.policies.map((policy) => policy.name);
       const on = taken.filter((name) => !disabled.has(`pack:${pack.id}@${pack.version}:${name}`));

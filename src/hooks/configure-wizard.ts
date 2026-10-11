@@ -52,7 +52,6 @@ import {
 import {
   detectInstalledClis,
   getIntegration,
-  hermesProfileHealth,
   settingsPathsFor,
 } from "./integrations";
 import { INTEGRATION_TYPES, type IntegrationType, type HookScope } from "./types";
@@ -92,7 +91,8 @@ import {
 } from "./cloud-connection";
 import { hasPermission, introspectKey, PERMISSION_EVENTS, PERMISSION_POLICIES } from "./cloud-introspect";
 import { readConfig, readCredentials, updateConfig } from "./fp-config";
-import { writeBackfillRequest } from "./backfill-request";
+import { requestFreshStart } from "./backfill-request";
+import { hookedAtUserScope } from "./agent-selection";
 import {
   detectSetupState,
   isConfigured,
@@ -383,27 +383,8 @@ export function agentsCollapsedLines(
   return lines;
 }
 
-/**
- * Whether an agent has failproofai hooks in its USER settings — the seed for an
- * upgrade. User scope only: project hooks depend on the directory `config`
- * happens to run from. A gateway with several profiles counts when ANY profile
- * is hooked; requiring all of them would drop a partly hooked Hermes from the
- * seed, and setup would then unhook every profile it has.
- */
-export function hookedAtUserScope(id: IntegrationType, cwd: string): boolean {
-  const integration = getIntegration(id);
-  try {
-    if (integration.hooksInstalledInSettings("user", cwd)) return true;
-    if (id === "hermes") return hermesProfileHealth().some((p) => existsSync(p.home) && p.healthy);
-    const paths = settingsPathsFor(integration, "user", cwd);
-    if (paths.length < 2) return false;
-    return paths.some((one) =>
-      integration.hooksInstalledInSettings.call({ ...integration, getSettingsPaths: () => [one] }, "user", cwd),
-    );
-  } catch {
-    return false;
-  }
-}
+/** Lives with the selection it seeds; re-exported where setup always had it. */
+export { hookedAtUserScope };
 
 /**
  * Take failproofai's hooks out of these agents' USER settings, and nothing
@@ -1235,20 +1216,12 @@ export async function runConfigureWizard(
     cwd,
   );
 
-  // Agents traced again start fresh: their old cursors are forgotten and the
-  // collector reads the default window, exactly as for an agent never traced.
-  // Only when something will be collecting afterwards — on an open-source
-  // machine the request would wait for a connection that may never come, and
-  // the daemon drops one that old anyway.
-  if (added.length > 0 && collectingAfter && sessionsOn) {
-    try {
-      writeBackfillRequest({ kind: "added", agents: added, requestedAtMs: Date.now() });
-    } catch (err) {
-      hookLogWarn(
-        `could not write the backfill request for re-added agents: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
+  // Agents traced again start fresh (see `requestFreshStart`). Only on a
+  // rerun: its baseline is the selection the daemon actually filtered on. With
+  // no saved list (upgrade, first) the daemon was collecting every agent, so an
+  // agent "added" here was never untraced, has no stale cursors, and a request
+  // would only make the daemon re-read everything it already sent.
+  requestFreshStart(plan.mode === "rerun" ? added : [], collectingAfter && sessionsOn);
 
   updateConfig({ agents: { selected, seen: plan.seen } });
 

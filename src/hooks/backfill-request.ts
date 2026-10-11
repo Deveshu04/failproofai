@@ -1,10 +1,12 @@
 /**
  * The one writer of `~/.failproofai/state/backfill-request.json`.
  *
- * Two commands write it: `failproofai backfill` (a `user` request: re-send
- * what was modified since `sinceMs`) and `failproofai config` (an `added`
- * request: agents this run started tracing again, whose old cursors must not be
- * resumed). The file is a single slot, so each writer MERGES with whatever is
+ * Two kinds of request go in it: `failproofai backfill` writes a `user`
+ * request (re-send what was modified since `sinceMs`), and every path that
+ * traces an agent again writes an `added` one through `requestFreshStart`
+ * (`failproofai config`, and `policies --install`, `policies add` and the
+ * dashboard's agent panel through `keepAgentSelectionTrue`): agents whose old
+ * cursors must not be resumed. The file is a single slot, so each writer MERGES with whatever is
  * still pending instead of replacing it — otherwise config's request would
  * quietly cancel a backfill somebody asked for and the daemon has not picked up
  * yet. The daemon's reader is `crates/failproofaid/src/backfill.rs`.
@@ -22,7 +24,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { writeJsonAtomically } from "../../lib/atomic-write";
+import { readIngestCredential } from "./collector-config";
+import { readConfig } from "./fp-config";
 import { failproofaiHome } from "./fp-home";
+import { hookLogWarn } from "./hook-logger";
 
 /** How long the daemon acts on an `added` request; `ADDED_REQUEST_MAX_AGE` there. */
 export const ADDED_REQUEST_MAX_AGE_MS = 10 * 60 * 1000;
@@ -97,4 +102,48 @@ export function writeBackfillRequest(next: BackfillRequest, home?: string): Back
   const merged = mergeBackfillRequests(pending, next);
   writeJsonAtomically(path, merged);
   return merged;
+}
+
+/**
+ * Whether this machine collects session transcripts now: an ingest key on disk
+ * and `collector.sessions` on. A machine that is about to connect is the
+ * caller's to know — `failproofai config` decides that itself.
+ */
+export function machineCollectsSessions(): boolean {
+  try {
+    return readIngestCredential() !== null && readConfig().collector.sessions === true;
+  } catch {
+    // Unreadable credentials or config: the daemon cannot collect from them either.
+    return false;
+  }
+}
+
+/**
+ * Agents traced again start fresh: their old cursors are forgotten and the
+ * collector reads the default window, exactly as for an agent never traced.
+ * Without this, an agent unticked while its files kept growing resumes the old
+ * offsets once it is traced again, and ships what was written while nobody
+ * asked for it — the job the `added` request exists for (backfill.rs).
+ *
+ * The ONE place that decides it, so every path that re-traces an agent behaves
+ * the same. Call it BEFORE writing the selection that traces them: the daemon
+ * handles a pending request ahead of its config compare, so one landing a tick
+ * later would let the agent resume its stale cursors first.
+ *
+ * Only when something will be collecting (`collecting`): on an open-source
+ * machine the request would wait for a connection that may never come, and the
+ * daemon drops one that old anyway. Never throws; a failure is logged, and the
+ * caller's own write goes ahead. Returns whether a request was written.
+ */
+export function requestFreshStart(agents: readonly string[], collecting: boolean, now = Date.now()): boolean {
+  if (agents.length === 0 || !collecting) return false;
+  try {
+    writeBackfillRequest({ kind: "added", agents: [...agents], requestedAtMs: now });
+    return true;
+  } catch (err) {
+    hookLogWarn(
+      `could not write the backfill request for re-added agents: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return false;
+  }
 }

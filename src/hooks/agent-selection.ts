@@ -21,17 +21,58 @@
  * trace the agent — so that decision is the caller's, which knows the scope.
  *
  * Absent means every agent is traced, so an install has nothing to add. A
- * removal cannot be recorded without a list, so it writes every agent but the
- * ones removed, and `seen` as detected now.
+ * removal cannot be recorded without a list, so it writes one: the agents on
+ * this machine — detected, or still hooked at user scope — but the ones
+ * removed, and `seen` as detected now. Not "every agent but the ones removed":
+ * `failproofai config` restores a saved list as it stands, so that list would
+ * have it hook every agent this build knows, installed or not.
+ *
+ * An agent traced again starts fresh (`requestFreshStart`), exactly as one
+ * re-ticked in `failproofai config` does.
  *
  * Only the commands that ask for it (`syncAgentSelection`) come here.
  * `failproofai config` writes the selection itself, and `failproofai uninstall`
  * leaves it alone.
  */
+import { existsSync } from "node:fs";
+
+import { machineCollectsSessions, requestFreshStart } from "./backfill-request";
 import { readConfig, updateConfig } from "./fp-config";
-import { detectInstalledClis, getIntegration } from "./integrations";
+import { detectInstalledClis, getIntegration, hermesProfileHealth, settingsPathsFor } from "./integrations";
 import { optsFor, screenKit } from "./tui";
 import { INTEGRATION_TYPES, type IntegrationType } from "./types";
+
+/**
+ * Whether an agent has failproofai hooks in its USER settings — the seed for an
+ * upgrade in `failproofai config`, and what a removal on a machine with no
+ * saved list keeps traced. User scope only: project hooks depend on the
+ * directory a command happens to run from. A gateway with several profiles
+ * counts when ANY profile is hooked; requiring all of them would drop a partly
+ * hooked Hermes from the seed, and setup would then unhook every profile it has.
+ *
+ * Hooked means routed to failproofai, not healthy: a Hermes profile still on the
+ * legacy shell hooks sends every tool call here today. Requiring the healthy
+ * native plugin left such a gateway unticked, so setup stopped collecting it and
+ * never ran the install that moves it onto the plugin.
+ */
+export function hookedAtUserScope(id: IntegrationType, cwd: string): boolean {
+  const integration = getIntegration(id);
+  try {
+    if (integration.hooksInstalledInSettings("user", cwd)) return true;
+    if (id === "hermes") {
+      return hermesProfileHealth().some(
+        (p) => existsSync(p.home) && ((p.pluginInstalled && p.pluginEnabled) || p.legacyShellHookPresent),
+      );
+    }
+    const paths = settingsPathsFor(integration, "user", cwd);
+    if (paths.length < 2) return false;
+    return paths.some((one) =>
+      integration.hooksInstalledInSettings.call({ ...integration, getSettingsPaths: () => [one] }, "user", cwd),
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Bring the selection in line with hooks just installed for, or removed from,
@@ -76,7 +117,14 @@ export function keepAgentSelectionTrue(
     next = { selected: saved.selected.filter((id) => !gone.has(id)), seen: saved.seen };
   } else {
     moved = touched;
-    next = { selected: INTEGRATION_TYPES.filter((id) => !touched.includes(id)), seen: detectInstalledClis() };
+    const detected = detectInstalledClis();
+    const cwd = process.cwd();
+    next = {
+      selected: INTEGRATION_TYPES.filter(
+        (id) => !touched.includes(id) && (detected.includes(id) || hookedAtUserScope(id, cwd)),
+      ),
+      seen: detected,
+    };
   }
 
   const kit = screenKit(optsFor(process.stdout));
@@ -84,6 +132,8 @@ export function keepAgentSelectionTrue(
   const who = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
   const one = names.length === 1;
   const setup = kit.cmd("failproofai config");
+  // Before the selection that traces them, in the same order setup uses.
+  if (change === "installed") requestFreshStart(moved, machineCollectsSessions());
   try {
     updateConfig({ agents: next });
   } catch (err) {

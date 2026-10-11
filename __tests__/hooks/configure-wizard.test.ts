@@ -129,6 +129,7 @@ import {
   cloudCollapsedLines,
   defaultSelection,
   doneLines,
+  hookedAtUserScope,
   planAgents,
   removeUserScopeHooks,
   resolveCloudUrl,
@@ -460,6 +461,40 @@ describe("doneLines — custom policy files", () => {
   });
 });
 
+describe("hookedAtUserScope — Hermes", () => {
+  let hermes: string;
+  beforeEach(() => {
+    hermes = resolve(fileHome, ".hermes");
+    mkdirSync(hermes, { recursive: true });
+    vi.stubEnv("HERMES_HOME", hermes);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(hermes, { recursive: true, force: true });
+  });
+
+  it("counts a profile still on the legacy shell hooks: its tool calls reach failproofai today", () => {
+    writeFileSync(
+      resolve(hermes, "config.yaml"),
+      ["hooks:", "  pre_tool_call:", "    - command: failproofai --hook pre_tool_call --cli hermes", ""].join("\n"),
+    );
+    expect(hookedAtUserScope("hermes", "/tmp")).toBe(true);
+    // So an upgrade keeps it ticked, and selecting it moves it onto the plugin.
+    const plan = planAgents({ detected: ["claude", "hermes"], hooked: ["claude", "hermes"] });
+    expect(plan.initial).toEqual(["claude", "hermes"]);
+  });
+
+  it("does not count a profile with nothing routed to failproofai", () => {
+    writeFileSync(resolve(hermes, "config.yaml"), "model: gpt-5\n");
+    expect(hookedAtUserScope("hermes", "/tmp")).toBe(false);
+  });
+
+  it("does not count a plugin directory with the plugin not enabled", () => {
+    writeFileSync(resolve(hermes, "config.yaml"), "plugins:\n  enabled: [failproofai]\n  disabled: [failproofai]\n");
+    expect(hookedAtUserScope("hermes", "/tmp")).toBe(false);
+  });
+});
+
 describe("removeUserScopeHooks", () => {
   it("takes hooks out of that agent's user settings and touches no policy config", () => {
     const userCfg = resolve(fileHome, ".failproofai", "policies-config.json");
@@ -786,6 +821,20 @@ describe("backfill for agents traced again", () => {
     const request = JSON.parse(readFileSync(backfillRequestPath(), "utf8"));
     expect(request).toMatchObject({ kind: "added", agents: ["goose"] });
     expect(request.sinceMs).toBeUndefined();
+  });
+
+  it("writes none on an upgrade: with no saved list the daemon was already collecting every agent", async () => {
+    connectMachine();
+    vi.spyOn(getIntegration("claude"), "hooksInstalledInSettings").mockImplementation((scope) => scope === "user");
+    vi.mocked(detectInstalledClis).mockReturnValue(["claude", "goose"]);
+    drive({ agents: ["claude", "goose"] });
+
+    const result = await runConfigureWizard(ttyIO());
+
+    // Goose is added to the hooks, and the screen says so, but it was never
+    // untraced: forgetting its cursors would only re-send what was sent.
+    expect(result.agents?.added).toEqual(["goose"]);
+    expect(existsSync(backfillRequestPath())).toBe(false);
   });
 
   it("writes no request on an open-source machine, or when nothing was added", async () => {

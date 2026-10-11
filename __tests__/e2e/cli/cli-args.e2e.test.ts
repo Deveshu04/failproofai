@@ -8,6 +8,10 @@
  * before running these tests.
  */
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runCli, assertCleanError, assertSuccess } from "../helpers/cli-runner";
 
 // ── Top-level flags ───────────────────────────────────────────────────────────
@@ -203,10 +207,54 @@ describe("policies: list (default)", () => {
   });
 
   it("lists every policy, folding none, with --all", () => {
-    const result = runCli("policies", "--all");
-    assertSuccess(result);
-    expect(result.stdout).toMatch(HEADER);
-    expect(result.stdout).not.toMatch(/more off/);
+    // Only a pack section folds, and this file's HOME has no pack, so on its own
+    // `not.toMatch(/more off/)` could never fail. Seed a pack with one policy
+    // off, prove the bare listing folds it, then that --all does not. The pack
+    // directory is set for these two runs only: other tests here assert an
+    // empty listing.
+    const packs = mkdtempSync(join(tmpdir(), "failproofai-cli-e2e-packs-"));
+    const artifact = "export const hooks = [];\n";
+    const digest = createHash("sha256").update(artifact).digest("hex");
+    mkdirSync(join(packs, "artifacts"), { recursive: true });
+    writeFileSync(join(packs, "artifacts", `${digest}.mjs`), artifact);
+    writeFileSync(
+      join(packs, "installed.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        packs: [{
+          id: "FailproofAI/policies",
+          version: "1.2.0",
+          source: "github:FailproofAI/policies@v1.2.0",
+          entry: `artifacts/${digest}.mjs`,
+          sha256: digest,
+          enabled: ["e2e-shown-when-on"],
+          policies: [
+            { name: "e2e-shown-when-on", description: "on", category: "Security", defaultEnabled: true, match: {} },
+            { name: "e2e-folded-when-off", description: "off", category: "Security", defaultEnabled: false, match: {} },
+          ],
+        }],
+      }),
+    );
+    const prior = process.env.FAILPROOFAI_PACK_DIR;
+    process.env.FAILPROOFAI_PACK_DIR = packs;
+    try {
+      const folded = runCli("policies");
+      assertSuccess(folded);
+      expect(folded.stdout).toMatch(/● e2e-shown-when-on/);
+      expect(folded.stdout).toMatch(/○ 1 more off/);
+      expect(folded.stdout).not.toContain("e2e-folded-when-off");
+
+      const result = runCli("policies", "--all");
+      assertSuccess(result);
+      expect(result.stdout).toMatch(HEADER);
+      expect(result.stdout).toMatch(/● e2e-shown-when-on/);
+      expect(result.stdout).toMatch(/○ e2e-folded-when-off/);
+      expect(result.stdout).not.toMatch(/more off/);
+    } finally {
+      if (prior === undefined) delete process.env.FAILPROOFAI_PACK_DIR;
+      else process.env.FAILPROOFAI_PACK_DIR = prior;
+      rmSync(packs, { recursive: true, force: true });
+    }
   });
 
   it("p shorthand lists policies", () => {

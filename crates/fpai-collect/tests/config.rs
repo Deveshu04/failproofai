@@ -51,6 +51,34 @@ fn absent_config_means_collection_is_off() {
 }
 
 #[test]
+fn config_v2_selection_and_legacy_otel_transport_settings_are_independent() {
+    let home = tmp_home("otel-v2");
+    fs::write(
+        home.join("config.json"),
+        r#"{
+          "agents": {"selected": ["claude", "codex"], "seen": ["claude", "codex"]},
+          "collector": {
+            "sessions": true,
+            "agents": {"claude": {"sessions": false}},
+            "otlp": {"enabled": true, "port": 14318}
+          },
+          "otel": {"agents": {"claude": {"local": true}}}
+        }"#,
+    )
+    .unwrap();
+    let cfg = without_env_overrides(|| config::load(&home).unwrap());
+    assert!(cfg.agents.traces("claude"));
+    assert!(cfg.agents.traces("codex"));
+    assert!(!cfg.agents.traces("goose"));
+    assert!(!cfg.settings.sessions_for("claude"));
+    assert!(!cfg.settings.sessions_for("claude-subagent"));
+    assert!(cfg.settings.sessions_for("codex"));
+    assert!(cfg.settings.otlp.enabled);
+    assert_eq!(cfg.settings.otlp.port, 14318);
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
 fn a_key_alone_does_not_enable_session_collection() {
     // The privacy default, and the one most likely to be eroded by accident.
     // Transcripts carry prompts, file contents and pasted credentials, so

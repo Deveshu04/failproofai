@@ -6,6 +6,8 @@ icon: "radio"
 
 `failproofai otel` configures optional OpenTelemetry reporting to FailproofAI Cloud. First connect your machine with `failproofai config` and ask an organisation admin to enable **Settings → OpenTelemetry**.
 
+Interactive setup asks about OpenTelemetry after the Cloud key field and the agent picker. The optional step defaults to No. Choose Yes to pick OTEL agents; the same enable code runs after the connection is written. Esc before setup applies changes nothing. Unattended setup, a supplied key, open-source mode, and keeping a saved connection do not opt you in.
+
 ## Enable an agent
 
 ```bash
@@ -33,6 +35,8 @@ If transcript reporting is on for an agent, setup asks:
 > failproofai already sends Claude Code sessions to Cloud. Send them with OTEL instead? Transcript upload for Claude Code stops.
 
 The default is No. `--yes` accepts the switch without a prompt. Other agents and policy enforcement are unaffected.
+
+Config v2 keeps the remembered tracing list at `agents.selected` (and detection history at `agents.seen`). The per-agent transcript preference remains at `collector.agents.<agent>.sessions`, OTEL ownership at `otel.agents`, and relay settings at `collector.otlp.enabled` / `collector.otlp.port`. These separate keys keep old OTEL configurations readable: setup can change the tracing list without losing the transport preference or the state needed to restore your agent settings.
 
 ## Inspect setup
 

@@ -238,6 +238,26 @@ describe("managed OTEL settings", () => {
 });
 
 describe("opt-in, one path and status", () => {
+  it("config v2 selection writes preserve legacy OTEL ownership, overrides and relay preferences", async () => {
+    const selection = { selected: ["claude", "codex"], seen: ["claude", "codex", "goose"] };
+    updateConfig({ agents: selection, collector: { sessions: true, otlp: { enabled: false, port: 14318 } } });
+    await runOtelCommand(["enable", "claude", "--local", "--yes"], options());
+    const ownership = JSON.parse(readFileSync(configFile(), "utf8")).otel;
+    expect(readConfig().agents).toEqual(selection);
+    expect(agentSessionsEnabled("claude")).toBe(false);
+    expect(agentSessionsEnabled("codex")).toBe(true);
+    const rerun = { selected: ["claude"], seen: selection.seen };
+    updateConfig({ agents: rerun, mode: "cloud" });
+    expect(JSON.parse(readFileSync(configFile(), "utf8")).otel).toEqual(ownership);
+    expect(readConfig().collector.otlp).toEqual({ enabled: true, port: 14318 });
+    expect(agentSessionsEnabled("claude")).toBe(false);
+    await runOtelCommand(["disable", "all"], options());
+    expect(readConfig().agents).toEqual(rerun);
+    expect(readConfig().collector.agents?.claude).toBeUndefined();
+    expect(readConfig().collector.otlp).toEqual({ enabled: false, port: 14318 });
+    expect(agentSessionsEnabled("claude")).toBe(true);
+  });
+
   it("one-path question defaults No; --yes sets only Claude override and disable restores absence", async () => {
     updateConfig({ collector: { sessions: true } });
     const path = agentConfigPath("claude", home);
@@ -349,15 +369,16 @@ describe("opt-in, one path and status", () => {
     ]);
   });
 
-  it.each([{ args: [] }, { args: ["enable"] }, { args: ["disable"] }, { args: ["status"] }, { args: ["env"] }])("real CLI help $args follows harness section style", ({ args }) => {
+  it.each([{ args: [] }, { args: ["enable"] }, { args: ["disable"] }, { args: ["status"] }, { args: ["env"] }])("real CLI help $args follows config v2's screen style", ({ args }) => {
     const result = spawnSync("bun", ["bin/failproofai.mjs", "otel", ...args, "--help"], {
       cwd: join(__dirname, "../.."), env: { ...process.env, HOME: home, FAILPROOFAI_TELEMETRY_DISABLED: "1" },
       encoding: "utf8", timeout: 15000,
     });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("otel");
-    expect(result.stdout.toLowerCase()).toContain("usage");
-    expect(result.stdout.toLowerCase()).toContain("notes");
+    expect(result.stdout).toContain("USAGE");
+    expect(result.stdout).toContain("EXAMPLES");
+    expect(result.stdout).not.toMatch(/NOTES|╭|╰/);
   });
 
   it.each([

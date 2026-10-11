@@ -341,7 +341,8 @@ async function printLines(lines, ok = true) {
  * flatten the structure they were expressing.
  */
 async function printReport(command, lines, opts = {}) {
-  const { wrap, printBlock, optsFor, screenKit, paint: palette } = await import("../src/hooks/tui");
+  const { printBlock, optsFor, screenKit, paint: palette } = await import("../src/hooks/tui");
+  const { reportBody } = await import("../src/hooks/report-body");
   const ok = opts.ok !== false;
   const stream = ok ? process.stdout : process.stderr;
   const o = optsFor(stream);
@@ -363,27 +364,10 @@ async function printReport(command, lines, opts = {}) {
   };
   // The 2026-10 shape: the header names the command, top-level lines start at
   // column 0, and lines a module indented on purpose keep their indent. A
-  // failed run opens with ✕, so it reads as the failure it is.
+  // failed run opens with ✕, so it reads as the failure it is — unless its
+  // lines already mark their own state; see report-body.ts.
   const name = command.charAt(0).toUpperCase() + command.slice(1);
-  const body = [];
-  let first = true;
-  for (const line of lines) {
-    if (line.trim() === "") {
-      body.push("");
-      continue;
-    }
-    if (line.startsWith(" ")) {
-      body.push(paint(line));
-      continue;
-    }
-    // After a failure's ✕ line, what follows is the fix: indented under it. A
-    // line that already opens on a state glyph says its own state.
-    const glyphed = /^[✓▲✕] /.test(line);
-    const lead = !ok && !glyphed ? (first ? `${c.err("✕")} ` : "  ") : "";
-    const wrapped = wrap(line, Math.max(20, o.cols - 2));
-    wrapped.forEach((w, i) => body.push(paint(i === 0 ? `${lead}${w}` : `${lead ? "  " : ""}${w}`)));
-    first = false;
-  }
+  const body = reportBody(lines, { ok, width: o.cols - 2 }).map(paint);
   printBlock(stream, [kit.header(opts.meta ? `${name}  ·  ${opts.meta}` : name), "", ...body]);
 }
 
@@ -1059,11 +1043,13 @@ async function runCli() {
       (step) => `  ${step.ok ? "migrated" : "FAILED  "} layout ${step.from} → ${step.to}`,
     );
     if (run.backedUp.length > 0) report.push("", `Saved first: ${run.backedUp.join(", ")}`);
+    // The failing step is marked where it is: the backup line comes first, and
+    // left to printReport's guess it took the ✕ with the error indented under it.
     if (run.failed) {
       report.push(
         "",
-        `Step ${run.failed.from} → ${run.failed.to} did not finish: ${run.failed.error}`,
-        `The home is still marked layout ${from} and will be retried.`,
+        `✕ Step ${run.failed.from} → ${run.failed.to} did not finish: ${run.failed.error}`,
+        `  The home is still marked layout ${from} and will be retried.`,
       );
     }
     await printReport("migrate", report, {
@@ -1139,11 +1125,14 @@ async function runCli() {
         report.push(`  ${step.ok ? "migrated" : "FAILED  "} layout ${step.from} → ${step.to}`);
       }
       if (run.backedUp.length > 0) report.push("", `Saved first: ${run.backedUp.join(", ")}`);
+      // Each failing half marks its own line (the daemon's lines arrive with
+      // their ✕ already): the report opens on whatever ran first, often a
+      // success, and printReport's guess would put the ✕ there.
       if (run.failed) {
         report.push(
           "",
-          `Step ${run.failed.from} → ${run.failed.to} did not finish: ${run.failed.error}`,
-          `The home is still marked layout ${state.found} and will be retried.`,
+          `✕ Step ${run.failed.from} → ${run.failed.to} did not finish: ${run.failed.error}`,
+          `  The home is still marked layout ${state.found} and will be retried.`,
         );
       }
     } else {
@@ -1182,19 +1171,22 @@ async function runCli() {
       const hermesResult = await runHermesUpdateMigration({
         daemonSupportsPolicyEvaluation: () => svc.probeDaemonPolicyEvaluation(),
       });
-      if (hermesResult.lines.length > 0) report.push("", ...hermesResult.lines);
+      if (hermesResult.lines.length > 0) {
+        // Its lines open on a "Hermes:" heading over one row per profile; on a
+        // failure the heading carries the ✕ and the rows say which profile.
+        const [heading, ...rest] = hermesResult.lines;
+        report.push("", hermesResult.ok ? heading : `✕ ${heading}`, ...rest);
+      }
       hermesOk = hermesResult.ok;
       hermesMigrated = hermesResult.profiles.filter((p) => p.status === "migrated").length;
     } catch (err) {
-      report.push("", `Hermes migration failed: ${err instanceof Error ? err.message : String(err)}`);
+      report.push("", `✕ Hermes migration failed: ${err instanceof Error ? err.message : String(err)}`);
       hermesOk = false;
     }
 
     const updateOk = daemonOk && !migrationFailed && hermesOk;
-    await printReport("update", report, {
-      ok: updateOk,
-      meta: `v${version}`,
-    });
+    // No `v${version}` meta: the header already names the version.
+    await printReport("update", report, { ok: updateOk });
     await track("cli_update", {
       ok: updateOk,
       migrations: migrationsRan,

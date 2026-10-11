@@ -196,4 +196,18 @@ describe("runFlushCommand request", () => {
     expect(r.pending).toBe(1);
     expect(r.lines.join(" ")).toContain("Delivery continues in the background");
   });
+
+  it("marks the timeout line itself, so the report's failure glyph is not guessed onto the first line", async () => {
+    spool("claude", ["a.jsonl"]);
+    const realNow = Date.now;
+    let t = realNow();
+    vi.spyOn(Date, "now").mockImplementation(() => t);
+    const sleep = async () => {
+      t += 1000;
+    };
+    const r = await runFlushCommand({ home, wait: true, timeoutSecs: 2, sleep });
+    vi.mocked(Date.now).mockRestore();
+    expect(r.lines[0]).toMatch(/^1 batch spooled\. Requested delivery\.$/);
+    expect(r.lines.find((l) => l.includes("Still 1 batch"))).toBe("▲ Still 1 batch spooled after 2s.");
+  });
 });

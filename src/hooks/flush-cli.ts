@@ -222,10 +222,12 @@ export async function runFlushCommand(opts: FlushOptions = {}): Promise<FlushRes
 
   // A timeout is not necessarily a failure — a large backlog legitimately takes
   // longer than the budget — so say what is still outstanding rather than
-  // calling it broken.
+  // calling it broken. Marked ▲ on its own line: the report opens on the
+  // "Requested delivery." line, and an unmarked failed report puts its ✕ on
+  // whichever line comes first.
   lines.push(
-    `Still ${pending} batch${pending === 1 ? "" : "es"} spooled after ${timeoutSecs}s.`,
-    "Delivery continues in the background; re-run with a longer --timeout to keep watching.",
+    `▲ Still ${pending} batch${pending === 1 ? "" : "es"} spooled after ${timeoutSecs}s.`,
+    "  Delivery continues in the background; re-run with a longer --timeout to keep watching.",
   );
   return { exitCode: 1, pending, lines };
 }

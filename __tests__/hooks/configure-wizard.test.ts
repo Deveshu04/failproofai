@@ -170,19 +170,28 @@ const agentOpts = (): MultiSelectOptions<IntegrationType> =>
   vi.mocked(multiSelect).mock.calls[0]![0] as unknown as MultiSelectOptions<IntegrationType>;
 
 // The apply path writes under homedir()/.failproofai — HOME is isolated for the
-// whole file so no test ever touches the developer's real config.
+// whole file so no test ever touches the developer's real config. So is
+// FAILPROOFAI_HOME: every failproofai path resolves through it FIRST, and the
+// beforeEach below deletes credentials.json and config.json. A developer who
+// exports it (the documented override for containers and the SDK spool) would
+// otherwise lose their real cloud key to the first test.
 let fileHome: string;
 let realHome: string | undefined;
+let realFpHome: string | undefined;
 /** Must match the path built inside the hooks-config mock factory above. */
 const WIZARD_TEST_CONFIG_DIR = resolve(tmpdir(), `fpai-wizard-cfg-${process.pid}`);
 beforeAll(() => {
   realHome = process.env.HOME;
+  realFpHome = process.env.FAILPROOFAI_HOME;
   fileHome = mkdtempSync(resolve(tmpdir(), "fpai-cfg-"));
   process.env.HOME = fileHome;
+  process.env.FAILPROOFAI_HOME = resolve(fileHome, ".failproofai");
 });
 afterAll(() => {
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
+  if (realFpHome === undefined) delete process.env.FAILPROOFAI_HOME;
+  else process.env.FAILPROOFAI_HOME = realFpHome;
   rmSync(fileHome, { recursive: true, force: true });
   rmSync(WIZARD_TEST_CONFIG_DIR, { recursive: true, force: true });
 });
@@ -1043,16 +1052,23 @@ describe("config --token with --no-transcripts", () => {
 
 describe("first-run redirect", () => {
   let origHome: string | undefined;
+  let origFpHome: string | undefined;
   let tmp: string;
   beforeEach(() => {
     origHome = process.env.HOME;
+    origFpHome = process.env.FAILPROOFAI_HOME;
     delete process.env.FAILPROOFAI_NO_FIRST_RUN;
     tmp = mkdtempSync(resolve(tmpdir(), "fpai-firstrun-"));
+    // A fresh machine per test: the failproofai home moves with HOME, or the
+    // file-wide one carries what earlier tests applied.
     process.env.HOME = tmp;
+    process.env.FAILPROOFAI_HOME = resolve(tmp, ".failproofai");
   });
   afterEach(() => {
     if (origHome === undefined) delete process.env.HOME;
     else process.env.HOME = origHome;
+    if (origFpHome === undefined) delete process.env.FAILPROOFAI_HOME;
+    else process.env.FAILPROOFAI_HOME = origFpHome;
     rmSync(tmp, { recursive: true, force: true });
   });
 

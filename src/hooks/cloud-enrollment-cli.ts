@@ -333,6 +333,62 @@ export async function runRenameCommand(
   return { exitCode: 0, lines };
 }
 
+/**
+ * Why `config --oss|--agents --machine-label <name>` cannot apply the name, or
+ * null when it can. Asked BEFORE setup, so a refusal changes nothing.
+ *
+ * Alongside a setup option the label is the name to connect under, and setup
+ * only connects when it is given a key. With no key and no saved connection
+ * there is nothing to name — unless somebody is at the prompt, where a key can
+ * still be pasted. --oss never connects. Before this check the label was
+ * dropped without a word and the run exited 0.
+ */
+export function machineLabelRefusal(opts: { oss: boolean; keyGiven: boolean; interactive: boolean }): string | null {
+  if (readCloudCredentials()) return null;
+  if (opts.oss) {
+    return (
+      "--machine-label names a machine connected to FailproofAI Cloud, and --oss leaves this one unconnected.\n" +
+      "Drop --machine-label, or set FAILPROOFAI_CLOUD_TOKEN and run  `failproofai config --machine-label <name>`."
+    );
+  }
+  if (opts.keyGiven || opts.interactive) return null;
+  return (
+    "--machine-label names a machine connected to FailproofAI Cloud, and this one is not connected.\n" +
+    "Set FAILPROOFAI_CLOUD_TOKEN to connect under that name, or drop --machine-label."
+  );
+}
+
+/**
+ * The name `config --oss|--agents --machine-label <name>` asked for, applied
+ * after setup ran. Null when there is nothing to report: no label, or setup
+ * already connected under it.
+ *
+ * Setup applies the label only when it connects. On a machine it left
+ * connected as it was — `--oss`, `--agents` with no new key, Enter on the saved
+ * key — this is the rename the flag asked for.
+ */
+export async function applyMachineLabelAfterSetup(
+  label: string | undefined,
+  deps: { verify?: typeof verifyCloudCredentials } = {},
+): Promise<CommandResult | null> {
+  const trimmed = label?.trim();
+  if (!trimmed) return null;
+  const creds = readCloudCredentials();
+  if (creds?.machineLabel === trimmed) return null;
+  if (!creds) {
+    // Reached only from the prompt (see machineLabelRefusal): a key could have
+    // been pasted, and open source was chosen instead.
+    return {
+      exitCode: 0,
+      lines: [
+        `▲ ${trimmed} was not applied: this machine is not connected to FailproofAI Cloud.`,
+        "  Name it as it connects:  `failproofai config --machine-label <name>`",
+      ],
+    };
+  }
+  return runRenameCommand(trimmed, deps);
+}
+
 export function runDisconnectCommand(): CommandResult {
   const existing = readCloudCredentials();
   const hadIngest = hasIngestCredential();

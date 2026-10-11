@@ -586,3 +586,36 @@ describe("action results in the new look", () => {
     expect(result.stderr).not.toContain("`");
   });
 });
+
+describe("review fixes for #881", () => {
+  it("answers --uninstall and unpause with what they asked for, never the opposite", () => {
+    const uninstall = runCli("--uninstall").stderr;
+    expect(uninstall).toContain("  Did you mean  failproofai policies --uninstall?");
+    expect(uninstall).not.toMatch(/policies --install/);
+    const unpause = runCli("unpause").stderr;
+    expect(unpause).toContain("  Did you mean  failproofai config --resume?");
+    expect(unpause).not.toContain("--pause");
+  });
+
+  it("accepts the retired --send-transcripts as a no-op, rather than as an unknown option", () => {
+    // Missing --connect's url is the first thing it trips over, so the run
+    // proves the flag got past the option check without reaching a server.
+    const result = runCli("config", "--send-transcripts", "--connect");
+    expect(result.stderr).not.toContain("Unexpected argument");
+    assertCleanError(result, "Missing value after --connect.");
+  });
+
+  it("refuses --send-transcripts with --no-transcripts", () => {
+    assertCleanError(runCli("config", "--send-transcripts", "--no-transcripts"), "cannot be combined");
+  });
+
+  it("refuses --machine-label with --oss on a machine that is not connected, instead of dropping it", () => {
+    const result = runCli("config", "--oss", "--machine-label", "prod-01");
+    assertCleanError(result, "--oss leaves this one unconnected");
+  });
+
+  it("refuses --machine-label with --agents and no key when nobody is at a prompt", () => {
+    const result = runCli("config", "--agents", "claude", "--machine-label", "prod-01");
+    assertCleanError(result, "this one is not connected");
+  });
+});

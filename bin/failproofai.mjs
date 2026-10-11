@@ -1771,9 +1771,14 @@ async function runCli() {
 
     // Every option config takes. A typo used to fall through to the full setup
     // run with the option ignored, so `--agent claude` asked every question.
+    //
+    // `--send-transcripts` is retired, not unknown: it was the transcript
+    // opt-in until transcripts became the default (#653), and provisioning
+    // scripts written then still pass it. Accepted, and does nothing.
     const CONFIG_FLAGS = new Set([
       "--token", "--oss", "--agents", "--status", "--pause", "--resume", "--all", "--session",
       "--connect", "--disconnect", "--no-transcripts", "--url", "--machine-label", "--machine-id",
+      "--send-transcripts",
     ]);
     const CONFIG_VALUE_FLAGS = new Set([
       "--token", "--agents", "--pause", "--session", "--connect", "--url", "--machine-label", "--machine-id",
@@ -1789,6 +1794,13 @@ async function runCli() {
           (CONFIG_FLAGS.has(asFlag) && asFlag !== strayConfig
             ? `Did you mean  \`failproofai config ${asFlag}\`?`
             : "See its options:  `failproofai config --help`"),
+      );
+    }
+
+    if (args.includes("--send-transcripts") && args.includes("--no-transcripts")) {
+      throw new CliError(
+        "--send-transcripts and --no-transcripts cannot be combined.\n" +
+          "Transcripts are sent by default; --no-transcripts alone turns them off.",
       );
     }
 
@@ -1810,7 +1822,8 @@ async function runCli() {
     //
     // Alongside a setup option (--token, --oss, --agents) it is the name to set up
     // under: `config --token K --machine-label L` used to run as a rename, so
-    // setup never ran and the key was ignored.
+    // setup never ran and the key was ignored. Setup applies it when it connects;
+    // otherwise it is refused up front or applied as a rename afterwards (below).
     const wantsRename =
       connectIdx < 0 &&
       !wantsDisconnect &&
@@ -1967,6 +1980,19 @@ async function runCli() {
       }
       agents = ids;
     }
+    // `--machine-label` here is the name to connect under. When this run cannot
+    // connect at all it is refused now, before anything is written; on a
+    // machine that stays connected as it was, it is applied after setup.
+    const machineLabel = valueFor("--machine-label");
+    if (machineLabel !== undefined) {
+      const { machineLabelRefusal } = await import("../src/hooks/cloud-enrollment-cli");
+      const refusal = machineLabelRefusal({
+        oss,
+        keyGiven: !oss && Boolean(valueFor("--token") ?? process.env.FAILPROOFAI_CLOUD_TOKEN),
+        interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+      });
+      if (refusal) throw new CliError(refusal);
+    }
     const { runConfigureWizard } = await import("../src/hooks/configure-wizard");
     const result = await runConfigureWizard(
       {},
@@ -1974,12 +2000,23 @@ async function runCli() {
         token: oss ? undefined : (valueFor("--token") ?? process.env.FAILPROOFAI_CLOUD_TOKEN),
         url: valueFor("--url") ?? process.env.FAILPROOFAI_CLOUD_URL,
         machineId: valueFor("--machine-id"),
-        machineLabel: valueFor("--machine-label"),
+        machineLabel,
         noTranscripts: args.includes("--no-transcripts"),
         oss,
         agents,
       },
     );
+    // Setup names the machine only when it connects; when it left a
+    // connection as it was, the label is the rename the flag asked for.
+    let labelExit = 0;
+    if (result.applied && machineLabel !== undefined) {
+      const { applyMachineLabelAfterSetup } = await import("../src/hooks/cloud-enrollment-cli");
+      const renamed = await applyMachineLabelAfterSetup(machineLabel);
+      if (renamed) {
+        await printReport("rename", renamed.lines, { ok: renamed.exitCode === 0 });
+        labelExit = renamed.exitCode;
+      }
+    }
     await warnTokenOnArgv();
     await track("cli_configure_invoked", {
       applied: result.applied,
@@ -1998,7 +2035,7 @@ async function runCli() {
     // regardless discarded it: a fleet script could not tell "the user pressed
     // Esc" from "this machine could not install the required daemon and is
     // unconfigured". Cancelling is not a failure; the other two are.
-    await exitAfterFlush(!result.applied && result.abort && result.abort !== "cancelled" ? 1 : 0);
+    await exitAfterFlush(!result.applied && result.abort && result.abort !== "cancelled" ? 1 : labelExit);
     return;
   }
 

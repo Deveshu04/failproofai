@@ -1554,10 +1554,17 @@ export function stack(...groups: Array<string[] | null | undefined>): string[] {
  * a URL, a session id. Cutting those loses characters silently and with no
  * ellipsis to admit it; letting the terminal wrap keeps them copyable, which is
  * the entire reason they are printed.
+ *
+ * Colour is decided again from the stream written to. A command renders its
+ * lines before it knows whether they succeed, so they are drawn for stdout,
+ * and a failure then goes to stderr: with stdout a terminal and stderr
+ * redirected, escape codes reached the log. A stream that cannot show colour
+ * gets none, whatever the lines were drawn for.
  */
 export function printBlock(stdout: TTYOut, lines: string[]): void {
   if (lines.length === 0) return;
-  stdout.write(["", ...lines.map(closeSgr), ""].join("\n") + "\n");
+  const shown = colorsEnabled(stdout) ? lines.map(closeSgr) : lines.map((l) => l.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ""));
+  stdout.write(["", ...shown, ""].join("\n") + "\n");
 }
 
 /**

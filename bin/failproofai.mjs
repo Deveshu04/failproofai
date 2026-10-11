@@ -841,7 +841,8 @@ async function runCli() {
       sinceMs,
       dryRun: subArgs.includes("--dry-run"),
       agents,
-      // Drawn for the stream it lands on: a refusal goes to stderr.
+      // Drawn for stdout. A refusal goes to stderr, and printBlock drops the
+      // colour there when stderr cannot show it.
       render: optsFor(process.stdout),
     });
     await printLines(result.lines, result.exitCode === 0);

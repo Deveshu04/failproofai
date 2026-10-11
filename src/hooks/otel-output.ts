@@ -6,7 +6,7 @@ export function otelReportLines(verb: string, result: OtelResult): string[] {
   return result.lines.flatMap(line => {
     if (verb === "status") {
       const glyph = line.includes("unreadable settings") ? "▲" :
-        /: on\b|: listening\b/.test(line) ? "●" : "○";
+        /^[^:]+: (?:on\b|listening\b)/.test(line) ? "●" : "○";
       return [`${glyph} ${line}`];
     }
     if (line === OTEL_ORG_OFF) return [

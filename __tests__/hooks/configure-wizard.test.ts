@@ -657,7 +657,7 @@ describe("runConfigureWizard", () => {
     expect(out).toContain("▲ Policies are not enforcing yet.");
   });
 
-  it("sends counts, never names, with the completion event", async () => {
+  it("sends the agent counts with the completion event", async () => {
     vi.mocked(detectInstalledClis).mockReturnValue(["claude", "codex"]);
     await runConfigureWizard(ttyIO());
     const props = vi.mocked(trackHookEvent).mock.calls.find((call) => call[1] === "configure_applied")![2] as Record<string, unknown>;

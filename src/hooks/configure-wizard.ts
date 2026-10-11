@@ -1196,7 +1196,9 @@ export async function runConfigureWizard(
 
   const connectedAfterPlan = cloud.kind === "connect" || cloud.kind === "kept";
   // Telemetry runs concurrently with the rest of apply (never rejects,
-  // 5s-bounded) and is awaited before returning. Counts only: no agent names.
+  // 5s-bounded) and is awaited before returning. `cli` carries the selected
+  // agent ids, as it always has (and as hooks_installed does): a fixed list of
+  // product ids, never user content. The agents_* fields add counts only.
   const applied = emit("configure_applied", {
     target: "user",
     scopes: ["user"],

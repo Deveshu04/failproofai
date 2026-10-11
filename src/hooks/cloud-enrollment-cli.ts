@@ -96,9 +96,8 @@ export interface CommandResult {
  * the one reader who cannot use them, and it made the id look like the machine's
  * name. The id still has to appear: labels default to the hostname and are free to
  * collide, so the label alone cannot identify a machine. Eight hex characters
- * distinguish any realistic fleet while staying readable.
- *
- * `failproofai config --status --verbose` prints the full id for support.
+ * distinguish any realistic fleet while staying readable. `full` gives the whole
+ * id; no command prints it today.
  */
 export function describeMachine(
   machineId: string,
@@ -503,10 +502,7 @@ export interface ConnectionStatusReport {
  * the pause block together: rendered independently they computed two different
  * label columns and the window read as two commands' output stacked up.
  */
-export function connectionStatusReport(
-  daemonStatus = daemonServiceStatus,
-  verbose = false,
-): ConnectionStatusReport {
+export function connectionStatusReport(daemonStatus = daemonServiceStatus): ConnectionStatusReport {
   const envUrl = process.env.FAILPROOFAI_CLOUD_URL;
   if (envUrl) {
     // Env wins over the file in the daemon, so reporting the file here would
@@ -547,7 +543,7 @@ export function connectionStatusReport(
   const detail: Array<[string, string]> = [];
   if (creds) {
     detail.push(["cloud", `connected to ${creds.url}`]);
-    detail.push(["machine", describeMachine(creds.machineId, creds.machineLabel, verbose)]);
+    detail.push(["machine", describeMachine(creds.machineId, creds.machineLabel)]);
     detail.push(["token", maskToken(creds.token)]);
     detail.push(["policy", "pulling centrally-managed policies"]);
   } else {
@@ -586,13 +582,9 @@ export function connectionStatusReport(
 }
 
 /** The same report, rendered on its own — for any caller printing only this. */
-export function connectionStatusLines(
-  daemonStatus = daemonServiceStatus,
-  /** Print the full machine id rather than a short prefix. */
-  verbose = false,
-): string[] {
+export function connectionStatusLines(daemonStatus = daemonServiceStatus): string[] {
   const opts = optsFor(process.stdout);
-  const report = connectionStatusReport(daemonStatus, verbose);
+  const report = connectionStatusReport(daemonStatus);
   return stack(
     kitRows(report.rows, opts),
     report.warnings.length > 0 ? warning(report.warnings, opts) : null,

@@ -21,7 +21,6 @@ import {
 } from "./otel-writers";
 
 export const OTEL_ORG_OFF = "OTEL ingest is off for your org. An admin can turn it on in Settings → OpenTelemetry.";
-export const OTEL_WIZARD_QUESTION = "Also send OpenTelemetry from agents? (Gemini CLI, Copilot, or switch Claude Code / Codex)";
 export interface OtelResult {
   lines: string[];
   exitCode: number;
@@ -114,11 +113,6 @@ async function defaultConfirm(question: string): Promise<boolean> {
       { label: "Yes", value: true, hint: "switch this agent to OTEL" },
     ],
   }) === true;
-}
-export async function chooseWizardOtel(
-  choose: (question: string) => Promise<boolean> = defaultConfirm,
-): Promise<boolean> {
-  return choose(OTEL_WIZARD_QUESTION);
 }
 function restoreAgent(agent: OtelAgent, raw: JsonObject): void {
   const all = records(raw);

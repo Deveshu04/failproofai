@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
-import { runOtelCommand, chooseWizardOtel, OTEL_ORG_OFF, OTEL_WIZARD_QUESTION } from "../../src/hooks/otel-cli";
+import { runOtelCommand, OTEL_ORG_OFF } from "../../src/hooks/otel-cli";
 import { agentConfigPath, editAgentConfig, parseAgentConfig, vscodeSettingsPath, vscodeInstalled, agentOtelWrites } from "../../src/hooks/otel-writers";
 import { configFile, credentialsFile, otelAgentStateFile, otelAgentStateDir, otlpSpoolDir, resettablePaths } from "../../src/hooks/fp-home";
 import { readConfig, updateConfig } from "../../src/hooks/fp-config";
@@ -349,14 +349,10 @@ describe("opt-in, one path and status", () => {
     expect(existsSync(agentConfigPath("claude", home))).toBe(false);
   });
 
-  it("wizard question defaults No and uses the shared enable entry point", async () => {
-    expect(await chooseWizardOtel()).toBe(false);
-    const choose = vi.fn(async () => true);
-    expect(await chooseWizardOtel(choose)).toBe(true);
-    expect(choose).toHaveBeenCalledWith(OTEL_WIZARD_QUESTION);
+  it("is not part of `failproofai config`: setup never imports the OTEL command", () => {
     const source = readFileSync(join(__dirname, "../../src/hooks/configure-wizard.ts"), "utf8");
-    expect(source).toContain('runOtelCommand(["enable", agent]');
-    expect(source).toContain("!unattended && !preAnswered");
+    expect(source).not.toContain('from "./otel-cli"');
+    expect(source).not.toContain('import("./otel-cli")');
   });
 
   it("analytics properties contain only agent, local and content", async () => {

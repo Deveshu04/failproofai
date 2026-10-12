@@ -6,7 +6,7 @@
 
 - Add opt-in coding-agent OpenTelemetry setup, reversible per-agent transcript switching, and a loopback OTLP relay (#880).
 - Add optional TypeScript and Python OpenTelemetry span exporters with durable OTLP/JSON spool delivery and no hard runtime dependencies (#880).
-- Port OpenTelemetry help, setup and the optional wizard step into the new TUI and config v2, retaining per-agent transcript overrides and reversible settings (#880).
+- Port OpenTelemetry help and setup into the new TUI, retaining per-agent transcript overrides and reversible settings. OpenTelemetry stays out of `failproofai config`: it is opt-in, per agent, through `failproofai otel enable <agent>` (#880).
 - New terminal look for the CLI, step one: the palette gains the redesign's label grey, progress-track grey and a red for failures. Descriptions keep the terminal's own colour, and the greys fall back to the dim attribute below 24-bit, so every screen stays readable on light themes (#881)
 - Pickers in the new look: an UPPERCASE heading with a live "n of m selected", a `›` cursor and `■ □` boxes, twelve rows before scrolling, plain `a` to toggle all, and the key hints at the foot. The `policies -i` agent menu now uses the shared picker (#881)
 - Every `--help` page in the new look, cut to usage, options and examples, with every real flag and its real default. The index opens with three getting-started steps, then lists every command by what it is for. `policies add|remove|show --help` now prints the one policies page (#881)
@@ -33,7 +33,7 @@
 ### Fixes
 
 - Preserve Codex OTEL header comments, omit local Claude auth-header settings, and require an executable or Copilot extension before configuring VS Code (#880).
-- Keep Python OTEL imports lazy, honor wizard home isolation, label direct loopback destinations correctly, omit local Codex auth headers, and scope help options to each verb (#880).
+- Keep Python OTEL imports lazy, label direct loopback destinations correctly, omit local Codex auth headers, and scope help options to each verb (#880).
 - `failproofai policies` showed nothing for a machine still on the pre-pack builtins, while those builtins were enforcing. It now says how many under BUILT IN, with the command that moves them into a pack (#881)
 - `failproofai config --disconnect` told you to restart the daemon to stop it sending. It stops on its own within a few seconds, because it polls the credential, and now says so (#881)
 - A config change that landed while the daemon was restarting its collector after a backfill was recorded as already running and never applied. `failproofai config` re-adding an agent hits exactly that, writing its backfill request and then the selection, so the agent stayed off until some unrelated edit (#881)

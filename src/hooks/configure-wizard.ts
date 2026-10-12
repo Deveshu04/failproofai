@@ -1,14 +1,13 @@
 /**
  * `failproofai config` — the interactive setup launcher.
  *
- * Five steps, in the order the machine needs them:
+ * Four steps, in the order the machine needs them:
  *
  *   1. Daemon  — REQUIRED. Asks for sudo first, on a clean terminal.
  *   2. Connect — one masked API-key field; Tab for open source.
  *   3. Agents  — which agents failproofai traces: hooks, collection and
  *                backfill all follow this one saved list.
- *   4. OTEL    — optional, default No, on interactive Cloud setup only.
- *   5. Done    — applied after the last answer; there is no separate review.
+ *   4. Done    — applied after the last answer; there is no separate review.
  *                Esc at any step before that changes nothing.
  *
  * ## Two ordering rules that are not cosmetic
@@ -31,7 +30,6 @@ import { dirname, resolve, sep } from "node:path";
 import { CORE_SOURCE } from "./pack-store";
 
 import {
-  selectOne,
   collapseAfter,
   colorsEnabled,
   multiSelect,
@@ -709,7 +707,6 @@ export async function runConfigureWizard(
   const stdin: TTYIn = io.stdin ?? process.stdin;
   const stdout: TTYOut = io.stdout ?? process.stdout;
   const cwd = process.cwd();
-  const home = process.env.HOME || homedir();
   const started = Date.now();
   // No terminal means no questions — not a refusal.
   //
@@ -1068,45 +1065,12 @@ export async function runConfigureWizard(
     if (picked === null) return cancel();
     selected = plan.order.filter((id) => picked.includes(id));
   }
-  // Optional OTEL choice is never implied by unattended setup or a pasted key.
-  const { chooseWizardOtel, runOtelCommand } = await import("./otel-cli");
-  let otelCancelled = false;
-  const otelWanted = !unattended && !preAnswered && cloud.kind === "connect" && await chooseWizardOtel(
-    async message => {
-      const answer = await selectOne({
-        message,
-        choices: [
-          { label: "No", value: false, hint: "keep current telemetry" },
-          { label: "Yes", value: true, hint: "choose OTEL agents" },
-        ],
-        collapsed: value => [kit.head("OpenTelemetry"), kit.ok(value ? "Opting in to OTEL." : "Keeping current telemetry."), ""],
-        stdin, stdout,
-      });
-      otelCancelled = answer === null;
-      return answer === true;
-    },
-  );
-  if (otelCancelled) return cancel();
-  let otelAgents: string[] = [];
-  if (otelWanted) {
-    const picked = await multiSelect({
-      message: "Which agents should send OpenTelemetry?",
-      choices: [
-        { label: "Gemini CLI", value: "gemini", checked: false },
-        { label: "Copilot (VS Code)", value: "copilot", checked: false },
-        { label: "Claude Code", value: "claude", checked: false },
-        { label: "Codex", value: "codex", checked: false },
-      ],
-      stdin, stdout,
-    });
-    if (picked === null) return cancel();
-    otelAgents = picked;
-  }
   const { added, removed } = agentChanges(plan, selected);
 
   // ── Apply ─────────────────────────────────────────────────────────────────
   //
-  // The agents step (or the optional OTEL choice) was the last decision.
+  // The agents step was the last decision. OpenTelemetry is not part of setup:
+  // it is opt-in, per agent, through `failproofai otel enable <agent>`.
   // ORDER MATTERS here:
   //
   //  1. The daemon first, because setup requires it: if it cannot be installed
@@ -1321,23 +1285,6 @@ export async function runConfigureWizard(
     updateConfig({ mode: "cloud" });
   }
 
-  if (otelWanted && connected) {
-    for (const agent of otelAgents) {
-      const result = await runOtelCommand(["enable", agent], {
-        home,
-        onEvent: emit,
-        confirm: async message => await selectOne({
-          message,
-          choices: [
-            { label: "No", value: false, hint: "keep transcript upload" },
-            { label: "Yes", value: true, hint: "switch to OTEL" },
-          ],
-          stdin, stdout,
-        }) === true,
-      });
-      done.push(...result.lines.map(line => result.exitCode === 0 ? kit.ok(line) : kit.fail(line)));
-    }
-  }
   await applied;
   // Only now — a completed apply — is the launcher considered "seen", so
   // first-run onboarding stops offering itself on every command.

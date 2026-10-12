@@ -728,66 +728,27 @@ describe("connect step", () => {
     });
   });
 
-  it("passes the resolved HOME into OTEL enable after the optional wizard step", async () => {
-    const enable = vi.spyOn(otelCli, "runOtelCommand").mockResolvedValue({
-      lines: ["Gemini CLI OTEL enabled"], exitCode: 0,
-    });
-    drive({ cloud: { kind: "typed", key: "a-real-looking-key" }, agents: ["claude"] });
-    vi.mocked(selectOne).mockResolvedValueOnce(true);
-    vi.mocked(multiSelect).mockResolvedValueOnce(["gemini"]);
-    try {
-      const result = await runConfigureWizard(ttyIO());
-      expect(result.applied).toBe(true);
-      expect(result.connected).toBe(true);
-      expect(enable).toHaveBeenCalledExactlyOnceWith(
-        ["enable", "gemini"],
-        expect.objectContaining({ home: fileHome }),
-      );
-    } finally {
-      enable.mockRestore();
-    }
-  });
-
-  it("offers OTEL after agent selection, defaults No, and has no retired review step", async () => {
-    drive({ cloud: { kind: "typed", key: "a-real-looking-key" }, agents: ["claude"] });
-    const enable = vi.spyOn(otelCli, "runOtelCommand");
-    const result = await runConfigureWizard(ttyIO());
-    expect(result.applied).toBe(true);
-    expect(selectOne).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      message: otelCli.OTEL_WIZARD_QUESTION,
-      choices: [
-        expect.objectContaining({ label: "No", value: false }),
-        expect.objectContaining({ label: "Yes", value: true }),
-      ],
-    }));
-    expect(vi.mocked(multiSelect).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(selectOne).mock.invocationCallOrder[0]!,
-    );
-    expect(enable).not.toHaveBeenCalled();
-  });
-
-  it.each(["choice", "agents"])("Esc at the OTEL %s step changes nothing before apply", async step => {
-    drive({ cloud: { kind: "typed", key: "a-real-looking-key" }, agents: ["claude"] });
-    vi.mocked(selectOne).mockResolvedValueOnce(step === "choice" ? null : true);
-    if (step === "agents") vi.mocked(multiSelect).mockResolvedValueOnce(null);
-    const result = await runConfigureWizard(ttyIO());
-    expect(result).toEqual({ applied: false, abort: "cancelled" });
-    expect(installHooks).not.toHaveBeenCalled();
-    expect(connectToCloud).not.toHaveBeenCalled();
-    expect(existsSync(fpConfigFile())).toBe(false);
-    expect(existsSync(credentialsFile())).toBe(false);
-  });
-
-  it.each(["unattended", "token", "oss", "saved"])("does not imply OTEL for %s setup", async mode => {
-    if (mode === "saved") {
-      writeIngestCredential({ url: "https://app.befailproof.ai/v1/events", key: "saved-key-3f2a" });
-      drive({ cloud: { kind: "saved", verified: true } });
-    }
-    const result = await runConfigureWizard(mode === "unattended" ? headlessIO() : ttyIO(),
-      mode === "token" ? { token: "a-real-looking-key" } : mode === "oss" ? { oss: true } : {});
-    expect(result.applied).toBe(true);
-    expect(selectOne).not.toHaveBeenCalled();
-  });
+  it.each(["typed", "unattended", "token", "oss", "saved"])(
+    "never asks about OpenTelemetry or turns it on (%s setup): it is opt-in through `failproofai otel`",
+    async mode => {
+      const enable = vi.spyOn(otelCli, "runOtelCommand");
+      if (mode === "saved") {
+        writeIngestCredential({ url: "https://app.befailproof.ai/v1/events", key: "saved-key-3f2a" });
+        drive({ cloud: { kind: "saved", verified: true } });
+      } else if (mode === "typed") {
+        drive({ cloud: { kind: "typed", key: "a-real-looking-key" }, agents: ["claude"] });
+      }
+      try {
+        const result = await runConfigureWizard(mode === "unattended" ? headlessIO() : ttyIO(),
+          mode === "token" ? { token: "a-real-looking-key" } : mode === "oss" ? { oss: true } : {});
+        expect(result.applied).toBe(true);
+        expect(selectOne).not.toHaveBeenCalled();
+        expect(enable).not.toHaveBeenCalled();
+      } finally {
+        enable.mockRestore();
+      }
+    },
+  );
 
   it("checks a typed key without writing it, and reports a refusal", async () => {
     vi.mocked(validateIngestKey).mockResolvedValue({ ok: false, reason: "the server rejected that key (401)" });

@@ -71,8 +71,12 @@ export function makeSkewLogFilter(): (line: string) => string | null {
 export function makeNextStartupFilter(onReady?: () => void): (line: string) => string | null {
   let listening = false;
   return (line: string): string | null => {
-    if (listening) return line;
     const plain = line.replace(/\x1B\[[0-9;]*m/g, "").trim();
+    // Next 16.3 logs these around startup, the config timing AFTER `Ready in`,
+    // so they would print under the launch screen. Neither says anything the
+    // screen doesn't.
+    if (/^(?:✓\s*)?(?:Running next\.config\b|Starting\.\.\.$)/.test(plain)) return null;
+    if (listening) return line;
     if (/^(?:✓\s*)?Ready in\b/.test(plain)) {
       listening = true;
       onReady?.();

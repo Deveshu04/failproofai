@@ -1,22 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  STATUS_DASHBOARD_PORT,
-  countDecisionsSince,
   gatherStatusFacts,
   pickStatusAttention,
-  probeDashboardListening,
   readCollectorHealth,
   renderStatusScreen,
-  startOfLocalDay,
   type StatusDeps,
   type StatusFacts,
 } from "../../src/hooks/config-status";
-import { persistHookActivity, _resetForTest } from "../../src/hooks/hook-activity-store";
+import { _resetForTest } from "../../src/hooks/hook-activity-store";
 import { writePause } from "../../src/hooks/session-pause";
 
 const NOW = Date.UTC(2026, 9, 11, 14, 2, 0);
@@ -62,7 +57,6 @@ function facts(over: Partial<StatusFacts> = {}): StatusFacts {
       skew: null,
       checkCommand: "systemctl status failproofaid@chetan",
     },
-    dashboard: { url: "http://127.0.0.1:8020", listening: true },
     pauses: [],
     cloud: {
       kind: "file",
@@ -90,8 +84,6 @@ function facts(over: Partial<StatusFacts> = {}): StatusFacts {
       packsInstalled: 1,
       anyPack: "FailproofAI/policies@06b802b1c2d3",
     },
-    today: { blocked: 3, warned: 7 },
-    hermes: [],
     notEnforcing: null,
     ...over,
   };
@@ -115,7 +107,6 @@ describe("config --status — the screen", () => {
       "",
       "THIS MACHINE",
       "  daemon     ● Running failproofaid 1.0.11",
-      "  dashboard  ● http://127.0.0.1:8020",
       "  paused     No",
       "",
       "CLOUD",
@@ -126,7 +117,6 @@ describe("config --status — the screen", () => {
       "ENFORCEMENT",
       "  agents     9 traced, 3 not installed",
       "  policies   10 on from FailproofAI/policies@06b802b1c2d3",
-      "  today      3 blocked, 7 warned",
     ]);
   });
 
@@ -161,7 +151,7 @@ describe("config --status — the screen", () => {
   });
 
   it("puts every section's values on ONE column, derived from the labels", () => {
-    const lines = renderStatusScreen(facts({ hermes: [{ profile: "work", problem: "plugin not enabled" }] }), PLAIN);
+    const lines = renderStatusScreen(facts(), PLAIN);
     const starts = lines
       .filter((l) => l.startsWith("  ") && !l.startsWith("   "))
       .map((l) => l.length - l.replace(/^ {2}\S+\s+/, "").length);
@@ -189,7 +179,7 @@ describe("config --status — the screen", () => {
     const painted = withTrueColor(() => renderStatusScreen(f, { ...PLAIN, color: true }));
     const text = painted.join("\n");
     expect(text).toContain(`${GREY}○\x1B[0m Installed, not running`); // off: grey
-    expect(text).toContain(`${MINT}●\x1B[0m ${PINK}http://127.0.0.1:8020\x1B[0m`); // on: mint, URL: pink
+    expect(text).toContain(`${MINT}●\x1B[0m Healthy`); // on: mint
     expect(text).toContain(`${GREY}daemon\x1B[0m`); // labels grey
     expect(text).toContain("\x1B[1mTHIS MACHINE\x1B[0m"); // headings bold
     expect(text).toContain(`${AMBER}▲\x1B[0m Policies are not enforcing yet.`);
@@ -240,10 +230,8 @@ describe("config --status — THIS MACHINE", () => {
     );
   });
 
-  it("shows the dashboard's URL only while something listens there", () => {
-    expect(rowValue(renderStatusScreen(facts(), PLAIN), "dashboard")).toBe("● http://127.0.0.1:8020");
-    const down = facts({ dashboard: { url: "http://127.0.0.1:8020", listening: false } });
-    expect(rowValue(renderStatusScreen(down, PLAIN), "dashboard")).toBe("○ Not running");
+  it("has no dashboard row: the dashboard is a foreground command, not machine state", () => {
+    expect(renderStatusScreen(facts(), PLAIN).join("\n")).not.toMatch(/dashboard\s{2}|Not running/);
   });
 
   it("says so plainly when nothing is paused", () => {
@@ -260,7 +248,6 @@ describe("config --status — THIS MACHINE", () => {
     expect(machine).toEqual([
       "THIS MACHINE",
       "  daemon     ● Running failproofaid 1.0.11",
-      "  dashboard  ● http://127.0.0.1:8020",
       "  paused     1 session",
       "             0b1c2d3e-0000-4000-8000-000000000001  28m left, until 14:30  ·  /home/u/project",
       "             Cloud-managed policies keep enforcing.",
@@ -369,37 +356,10 @@ describe("config --status — ENFORCEMENT", () => {
     expect(policiesRow({ packOn: 0, firstPack: undefined, packsInstalled: 0, anyPack: undefined })).toBe("None installed");
   });
 
-  it("counts today's decisions", () => {
-    expect(rowValue(renderStatusScreen(facts({ today: { blocked: 0, warned: 0 } }), PLAIN), "today")).toBe(
-      "0 blocked, 0 warned",
-    );
-  });
-
-  it("lists every unhealthy Hermes profile with what is wrong", () => {
-    const lines = renderStatusScreen(
-      facts({
-        hermes: [
-          { profile: "default", problem: "plugin not enabled" },
-          { profile: "work", problem: "legacy shell hooks: Hermes cron jobs are not checked. Run `failproofai update`" },
-        ],
-      }),
-      PLAIN,
-    );
-    expect(lines).toContain("  hermes     ▲ default: plugin not enabled");
-    expect(lines).toContain(
-      "             ▲ work: legacy shell hooks: Hermes cron jobs are not checked. Run failproofai update",
-    );
-  });
-
-  it("paints a command inside a Hermes problem as a command, not in backticks", () => {
-    const painted = withTrueColor(() =>
-      renderStatusScreen(facts({ hermes: [{ profile: "work", problem: "Run `failproofai update`" }] }), {
-        ...PLAIN,
-        color: true,
-      }),
-    ).join("\n");
-    expect(painted).toContain(`${PINK}failproofai update\x1B[0m`);
-    expect(painted).not.toContain("`");
+  it("has no per-day counts and no per-agent rows: one row per fact about the machine", () => {
+    const text = renderStatusScreen(facts(), PLAIN).join("\n");
+    expect(text).not.toMatch(/^\s+today\s/m);
+    expect(text).not.toMatch(/^\s+hermes\s/m);
   });
 });
 
@@ -419,7 +379,6 @@ describe("config --status — the attention line", () => {
         refused: { total: 3, rejected: 3, credentialRejected: 2, byStatus: { 401: 2, 422: 1 } },
       },
       notEnforcing: "no-policies",
-      hermes: [{ profile: "work", problem: "plugin not enabled" }],
       policies: { ...facts().policies, refusedPacks: 1 },
     });
 
@@ -460,13 +419,6 @@ describe("config --status — the attention line", () => {
     f.notEnforcing = null;
     expect(pickStatusAttention(f)).toEqual({
       severity: "caution",
-      text: "Hermes profile work is unhealthy.",
-      fix: "failproofai update",
-    });
-
-    f.hermes = [];
-    expect(pickStatusAttention(f)).toEqual({
-      severity: "caution",
       text: "failproofaid is not running, so nothing is pulled or delivered.",
       fix: "failproofai config",
     });
@@ -504,16 +456,6 @@ describe("config --status — the attention line", () => {
       text: "2 packs will not load, so the tool calls they cover are denied.",
       fix: "failproofai policies",
     });
-  });
-
-  it("says how many Hermes profiles are unhealthy when there are several", () => {
-    const f = facts({
-      hermes: [
-        { profile: "a", problem: "x" },
-        { profile: "b", problem: "y" },
-      ],
-    });
-    expect(pickStatusAttention(f)?.text).toBe("2 Hermes profiles are unhealthy.");
   });
 
   it("names what stands idle when the daemon is down on a connected machine", () => {
@@ -597,8 +539,6 @@ const seams = (over: StatusDeps = {}): StatusDeps => ({
   daemonStatus: () => "not-installed",
   daemonAnswering: () => false,
   detectInstalled: () => ["claude", "codex"],
-  probeDashboard: async () => false,
-  hermesRows: () => [],
   notEnforcing: () => null,
   ...over,
 });
@@ -611,26 +551,8 @@ describe("gatherStatusFacts", () => {
     expect(f.pauses).toEqual([]);
     // No selection saved means every agent is traced; two binaries were found.
     expect(f.agents).toEqual({ traced: 12, notTraced: 0, notInstalled: 10 });
-    expect(f.today).toEqual({ blocked: 0, warned: 0 });
     expect(f.policies.packsInstalled).toBe(0);
     expect(f.daemon).toMatchObject({ service: "not-installed", answering: false, configured: false });
-    expect(f.dashboard).toEqual({ url: `http://127.0.0.1:${STATUS_DASHBOARD_PORT}`, listening: false });
-  });
-
-  it("probes the bind host the dashboard would use, reaching a wildcard on loopback", async () => {
-    const asked: string[] = [];
-    const probe = async (host: string, port: number) => {
-      asked.push(`${host}:${port}`);
-      return true;
-    };
-    process.env.FAILPROOFAI_DASHBOARD_HOST = "::1";
-    expect((await gatherStatusFacts(seams({ probeDashboard: probe }))).dashboard).toEqual({
-      url: "http://[::1]:8020",
-      listening: true,
-    });
-    process.env.FAILPROOFAI_DASHBOARD_HOST = "0.0.0.0";
-    expect((await gatherStatusFacts(seams({ probeDashboard: probe }))).dashboard.url).toBe("http://127.0.0.1:8020");
-    expect(asked).toEqual(["::1:8020", "127.0.0.1:8020"]);
   });
 
   it("counts the saved agent selection, ignoring ids that are not agents", async () => {
@@ -700,30 +622,6 @@ describe("gatherStatusFacts", () => {
     expect(out).not.toMatch(/dead/);
   });
 
-  it("counts today's blocks and warnings from the activity store, not yesterday's", async () => {
-    const noon = startOfLocalDay(NOW) + 12 * 3_600_000;
-    const row = (timestamp: number, decision: "allow" | "deny" | "instruct") =>
-      persistHookActivity({ timestamp, eventType: "PreToolUse", toolName: "Bash", policyName: null, decision, reason: null, durationMs: 1 });
-    row(startOfLocalDay(NOW) - 3_600_000, "deny"); // yesterday
-    row(noon - 3_600_000, "deny");
-    row(noon - 1_800_000, "deny");
-    row(noon - 600_000, "instruct");
-    row(noon - 60_000, "allow");
-    expect((await gatherStatusFacts(seams({ now: noon }))).today).toEqual({ blocked: 2, warned: 1 });
-  });
-
-  it("keeps only unhealthy Hermes profiles, in their own words", async () => {
-    const f = await gatherStatusFacts(
-      seams({
-        hermesRows: () => [
-          ["hermes/default", "native plugin enabled"],
-          ["hermes/work", "UNHEALTHY — plugin not enabled"],
-        ],
-      }),
-    );
-    expect(f.hermes).toEqual([{ profile: "work", problem: "plugin not enabled" }]);
-  });
-
   it("records the daemon's version and a version skew", async () => {
     put("VERSION", { layout: 4, cli: "1.0.11", daemon: "1.0.0" });
     put("bin/failproofaid-1.0.0", "binary");
@@ -787,40 +685,6 @@ describe("readCollectorHealth", () => {
   it("defaults to the file the daemon writes", () => {
     put("state/collector-health.json", { ts: 1_800_000_000, sources: {} });
     expect(readCollectorHealth()?.writtenAt).toBe(1_800_000_000_000);
-  });
-});
-
-describe("countDecisionsSince and startOfLocalDay", () => {
-  it("starts today at local midnight", () => {
-    const d = new Date(NOW);
-    expect(startOfLocalDay(NOW)).toBe(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime());
-    expect(startOfLocalDay(startOfLocalDay(NOW))).toBe(startOfLocalDay(NOW));
-  });
-
-  it("counts deny as blocked and instruct as warned, from the window on", () => {
-    const at = (timestamp: number, decision: "allow" | "deny" | "instruct") =>
-      persistHookActivity({ timestamp, eventType: "PreToolUse", toolName: "Bash", policyName: "p", decision, reason: null, durationMs: 1 });
-    at(1_000, "deny");
-    at(5_000, "deny");
-    at(6_000, "instruct");
-    at(7_000, "allow");
-    expect(countDecisionsSince(2_000)).toEqual({ blocked: 1, warned: 1 });
-    expect(countDecisionsSince(0)).toEqual({ blocked: 2, warned: 1 });
-  });
-
-  it("is zero on a machine with no activity", () => {
-    expect(countDecisionsSince(0)).toEqual({ blocked: 0, warned: 0 });
-  });
-});
-
-describe("probeDashboardListening", () => {
-  it("answers true while something listens on loopback, and false once it stops", async () => {
-    const server = createServer((socket) => socket.destroy());
-    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
-    const { port } = server.address() as AddressInfo;
-    expect(await probeDashboardListening("127.0.0.1", port)).toBe(true);
-    await new Promise<void>((done) => server.close(() => done()));
-    expect(await probeDashboardListening("127.0.0.1", port)).toBe(false);
   });
 });
 

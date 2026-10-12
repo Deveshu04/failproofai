@@ -1,10 +1,9 @@
 /**
  * `failproofai config --status`: what this machine is doing, on one screen.
  *
- *   THIS MACHINE   the daemon, the local dashboard, and any paused sessions
+ *   THIS MACHINE   the daemon and any paused sessions
  *   CLOUD          where this machine's data goes, and whether it arrives
- *   ENFORCEMENT    which agents are traced, which policies are on, and what
- *                  they blocked or warned about today
+ *   ENFORCEMENT    which agents are traced and which policies are on
  *
  * Then at most ONE line that needs attention, the most severe thing wrong with
  * its fix. Everything a reader could need to act on also stays in a row, so a
@@ -23,9 +22,7 @@
  * history is rescanned at upgrade.
  */
 import { readFileSync } from "node:fs";
-import { createConnection } from "node:net";
 import { resolve } from "node:path";
-import { resolveDashboardHost } from "../../lib/dashboard-host";
 import { readCloudCredentials } from "./cloud-enrollment";
 import { describeMachine } from "./cloud-enrollment-cli";
 import { cloudBaseFor } from "./cloud-connection";
@@ -44,9 +41,8 @@ import { deliveryHealth, type DeliveryHealth } from "./delivery-health";
 import { spoolBacklog } from "./flush-cli";
 import { isAgentTraced, readConfig, readCredentials, readVersionFile } from "./fp-config";
 import { collectorHealthFile, customPoliciesDir } from "./fp-home";
-import { getHookActivityEntriesSince } from "./hook-activity-store";
 import { configuredCustomPolicyPaths, findProjectConfigDir, readMergedHooksConfig } from "./hooks-config";
-import { detectInstalledClis, hermesProfileStatusRows, listInstallableIds } from "./integrations";
+import { detectInstalledClis, listInstallableIds } from "./integrations";
 import { notEnforcingReason, type NotEnforcingReason } from "./manager";
 import { hasInstalledRegexPacks, readInstalledPacks } from "./pack-manifest";
 import { CORE_SOURCE } from "./pack-store";
@@ -55,10 +51,6 @@ import { pauseClockTime, type PauseClock } from "./session-pause-cli";
 import { optsFor, screenKit, type ScreenKitOpts, type TTYOut } from "./tui";
 import type { IntegrationType } from "./types";
 
-/** Where `failproofai` (no arguments) serves the dashboard unless told otherwise. */
-export const STATUS_DASHBOARD_PORT = 8020;
-/** The dashboard probe's whole budget. A status command must not hang on it. */
-export const STATUS_PROBE_TIMEOUT_MS = 150;
 /**
  * A health record older than this was left by a daemon that stopped writing it.
  * The daemon rewrites it every 30 s and deletes it on a clean shutdown, so four
@@ -140,7 +132,6 @@ export interface StatusFacts {
     skew: { installed: string; expected: string } | null;
     checkCommand: string | null;
   };
-  dashboard: { url: string; listening: boolean };
   pauses: Array<{ sessionId: string; expiresAt: number; cwd?: string }>;
   cloud: StatusCloud;
   /** Absent when nothing is connected. */
@@ -153,9 +144,6 @@ export interface StatusFacts {
   /** notTraced: found on this machine and left out of the selection. */
   agents: { traced: number; notTraced?: number; notInstalled: number };
   policies: StatusPolicies;
-  today: { blocked: number; warned: number };
-  /** Hermes profiles that are not healthy, with what is wrong. Healthy ones are omitted. */
-  hermes: Array<{ profile: string; problem: string }>;
   notEnforcing: NotEnforcingReason | null;
 }
 
@@ -166,8 +154,6 @@ export interface StatusDeps {
   daemonStatus?: () => DaemonServiceStatus;
   daemonAnswering?: () => boolean;
   detectInstalled?: () => IntegrationType[];
-  probeDashboard?: (host: string, port: number) => Promise<boolean>;
-  hermesRows?: () => Array<[string, string]>;
   notEnforcing?: (cwd?: string) => NotEnforcingReason | null;
 }
 
@@ -210,63 +196,6 @@ export function readCollectorHealth(file: string = collectorHealthFile()): Statu
     ...(lastEventAt !== undefined ? { lastEventAt } : {}),
     ...(lastOkAt !== undefined ? { lastOkAt } : {}),
   };
-}
-
-/**
- * Whether anything accepts a TCP connection at `host:port`, within the budget.
- *
- * Nothing records that the dashboard is running — it runs in the foreground with
- * no pid file — so the only honest answer is to knock. Connect only: nothing is
- * sent, so a stranger listening on the port learns nothing from it.
- */
-export function probeDashboardListening(
-  host: string,
-  port: number,
-  timeoutMs: number = STATUS_PROBE_TIMEOUT_MS,
-): Promise<boolean> {
-  return new Promise((done) => {
-    let settled = false;
-    const socket = createConnection({ host, port });
-    const finish = (up: boolean) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      socket.destroy();
-      done(up);
-    };
-    const timer = setTimeout(() => finish(false), timeoutMs);
-    timer.unref?.();
-    socket.once("connect", () => finish(true));
-    socket.once("error", () => finish(false));
-  });
-}
-
-/** Local midnight of the day `now` falls in — where "today" starts for a reader. */
-export function startOfLocalDay(now: number): number {
-  const day = new Date(now);
-  day.setHours(0, 0, 0, 0);
-  return day.getTime();
-}
-
-/**
- * Tool calls blocked (`deny`) and warned about (`instruct`) since `sinceMs`.
- *
- * Read through the store the dashboard's activity tab reads, with its windowed
- * reader, so a long-lived machine pays for today's pages and not its history.
- * Observe-mode verdicts are not counted: they decided nothing.
- */
-export function countDecisionsSince(sinceMs: number): { blocked: number; warned: number } {
-  let blocked = 0;
-  let warned = 0;
-  try {
-    for (const entry of getHookActivityEntriesSince(sinceMs)) {
-      if (entry.decision === "deny") blocked++;
-      else if (entry.decision === "instruct") warned++;
-    }
-  } catch {
-    // An unreadable store is no activity, not a failed status command.
-  }
-  return { blocked, warned };
 }
 
 /**
@@ -345,13 +274,6 @@ export async function gatherStatusFacts(deps: StatusDeps = {}): Promise<StatusFa
   const now = deps.now ?? Date.now();
   const cwd = deps.cwd ?? process.cwd();
 
-  // Started first and awaited last: the probe is the one read that waits, and
-  // everything else here is a file. A wildcard bind is reached on loopback.
-  const bind = resolveDashboardHost(undefined, process.env.FAILPROOFAI_DASHBOARD_HOST).replace(/^\[(.*)\]$/, "$1");
-  const probeHost = bind === "0.0.0.0" ? "127.0.0.1" : bind === "::" ? "::1" : bind;
-  const dashboardUrl = `http://${probeHost.includes(":") ? `[${probeHost}]` : probeHost}:${STATUS_DASHBOARD_PORT}`;
-  const listening = (deps.probeDashboard ?? probeDashboardListening)(probeHost, STATUS_DASHBOARD_PORT).catch(() => false);
-
   const daemon: StatusFacts["daemon"] = {
     supported: isDaemonSupportedPlatform(),
     platform: process.platform,
@@ -418,18 +340,6 @@ export async function gatherStatusFacts(deps: StatusDeps = {}): Promise<StatusFa
     detected = new Set();
   }
 
-  // hermesProfileStatusRows keeps its own wording for each problem, and its
-  // rows are pinned by its own tests; only the unhealthy ones are shown here.
-  const unhealthy = "UNHEALTHY — ";
-  let hermes: StatusFacts["hermes"] = [];
-  try {
-    hermes = (deps.hermesRows ?? hermesProfileStatusRows)()
-      .filter(([, value]) => value.startsWith(unhealthy))
-      .map(([label, value]) => ({ profile: label.replace(/^hermes\//, ""), problem: value.slice(unhealthy.length) }));
-  } catch {
-    // Hermes config unreadable as a whole: its own commands report that.
-  }
-
   let notEnforcing: NotEnforcingReason | null = null;
   try {
     notEnforcing = (deps.notEnforcing ?? notEnforcingReason)(cwd);
@@ -440,7 +350,6 @@ export async function gatherStatusFacts(deps: StatusDeps = {}): Promise<StatusFa
   return {
     now,
     daemon,
-    dashboard: { url: dashboardUrl, listening: await listening },
     pauses: listActivePauses(now).map((pause) => ({
       sessionId: pause.sessionId,
       expiresAt: pause.expiresAt,
@@ -454,8 +363,6 @@ export async function gatherStatusFacts(deps: StatusDeps = {}): Promise<StatusFa
       notInstalled: known.filter((id) => !detected.has(id)).length,
     },
     policies: summarizePolicySources(cwd),
-    today: countDecisionsSince(startOfLocalDay(now)),
-    hermes,
     notEnforcing,
   };
 }
@@ -508,16 +415,6 @@ export function pickStatusAttention(facts: StatusFacts): StatusAttention | null 
             ? "failproofai policies add"
             : `failproofai policies add ${CORE_SOURCE}`;
     return { severity: "caution", text: "Policies are not enforcing yet.", fix };
-  }
-  if (facts.hermes.length > 0) {
-    return {
-      severity: "caution",
-      text:
-        facts.hermes.length === 1
-          ? `Hermes profile ${facts.hermes[0].profile} is unhealthy.`
-          : `${facts.hermes.length} Hermes profiles are unhealthy.`,
-      fix: "failproofai update",
-    };
   }
   if (cloud.kind !== "none" && !daemon.answering && daemon.service !== "running") {
     const idle =
@@ -636,7 +533,6 @@ export function renderStatusScreen(facts: StatusFacts, opts: ScreenKitOpts & { c
 
   const machineRows: Array<[string, string]> = [
     ["daemon", daemonValue()],
-    ["dashboard", facts.dashboard.listening ? `${kit.on} ${kit.cmd(facts.dashboard.url)}` : `${kit.off} Not running`],
     ["paused", facts.pauses.length === 0 ? "No" : many(facts.pauses.length, "session")],
     // One row per pause, under the value column: the id is what
     // `--resume --session <id>` needs, so it is never folded into a count.
@@ -675,13 +571,6 @@ export function renderStatusScreen(facts: StatusFacts, opts: ScreenKitOpts & { c
         (agents.notInstalled > 0 ? `, ${agents.notInstalled} not installed` : ""),
     ],
     ["policies", policiesValue()],
-    ["today", `${facts.today.blocked} blocked, ${facts.today.warned} warned`],
-    // The problem keeps hermesProfileStatusRows' own words; a `command` in them
-    // is painted as one, the way every command on this screen is.
-    ...facts.hermes.map((profile, i): [string, string] => [
-      i === 0 ? "hermes" : "",
-      kit.caution(`${profile.profile}: ${profile.problem.replace(/`([^`]+)`/g, (_, typed: string) => kit.cmd(typed))}`),
-    ]),
   ];
 
   const sections: Array<[string, Array<[string, string]>]> = [

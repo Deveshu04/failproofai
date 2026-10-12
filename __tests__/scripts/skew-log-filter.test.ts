@@ -110,6 +110,15 @@ describe("makeNextStartupFilter", () => {
     expect(f("▲ Next.js 16.3.6")).toBe("▲ Next.js 16.3.6");
   });
 
+  it("drops Next 16.3's config timing and Starting lines, before and after the ready line", () => {
+    const f = makeNextStartupFilter();
+    expect(f("✓ Starting...")).toBeNull();
+    BANNER.forEach((l) => f(l));
+    expect(f("✓ Running next.config took 0.8ms")).toBeNull();
+    expect(f("\x1B[32m✓\x1B[39m Running next.config took 12ms")).toBeNull();
+    expect(f("GET /api/health 200")).toBe("GET /api/health 200");
+  });
+
   it("reports ready once, however many ready lines follow", () => {
     const onReady = vi.fn();
     const f = makeNextStartupFilter(onReady);

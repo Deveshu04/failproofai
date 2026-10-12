@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { runOtelCommand, OTEL_ORG_OFF } from "../../src/hooks/otel-cli";
-import { agentConfigPath, editAgentConfig, parseAgentConfig, vscodeSettingsPath, vscodeInstalled, agentOtelWrites } from "../../src/hooks/otel-writers";
+import { agentConfigPath, editAgentConfig, parseAgentConfig, vscodeSettingsPath, vscodeInstalled, vscodeProbe, agentOtelWrites } from "../../src/hooks/otel-writers";
 import { configFile, credentialsFile, otelAgentStateFile, otelAgentStateDir, otlpSpoolDir, resettablePaths } from "../../src/hooks/fp-home";
 import { readConfig, updateConfig } from "../../src/hooks/fp-config";
 import { agentSessionsEnabled } from "../../src/hooks/collector-config";
@@ -195,13 +195,15 @@ describe("managed OTEL settings", () => {
   it("skips VS Code when absent and resolves macOS, Linux and Windows user paths", async () => {
     const savedPath = process.env.PATH;
     process.env.PATH = "";
+    // System-wide installs (/usr/share/code/code…) would otherwise answer for a dev machine with VS Code.
+    const appPaths = vi.spyOn(vscodeProbe, "appPaths").mockReturnValue([]);
     try {
       mkdirSync(dirname(agentConfigPath("copilot", home)), { recursive: true });
       const before = readFileSync(configFile(), "utf8");
       expect((await runOtelCommand(["enable", "copilot"], options())).lines).toEqual(["VS Code not found — skipping copilot"]);
       expect(readFileSync(configFile(), "utf8")).toBe(before);
       expect(vscodeInstalled(home)).toBe(false);
-    } finally { process.env.PATH = savedPath; }
+    } finally { process.env.PATH = savedPath; appPaths.mockRestore(); }
     expect(existsSync(agentConfigPath("copilot", home))).toBe(false);
     expect(vscodeSettingsPath(home, "darwin")).toContain("Library/Application Support/Code/User/settings.json");
     expect(vscodeSettingsPath(home, "linux")).toContain(".config/Code/User/settings.json");
@@ -214,6 +216,8 @@ describe("managed OTEL settings", () => {
   it("detects an executable or Copilot extension, not an unrelated extension", () => {
     const savedPath = process.env.PATH;
     process.env.PATH = "";
+    // System-wide installs (/usr/share/code/code…) would otherwise answer for a dev machine with VS Code.
+    const appPaths = vi.spyOn(vscodeProbe, "appPaths").mockReturnValue([]);
     try {
       mkdirSync(join(home, ".vscode/extensions/unrelated.extension-1.0"), { recursive: true });
       expect(vscodeInstalled(home)).toBe(false);
@@ -225,7 +229,21 @@ describe("managed OTEL settings", () => {
       writeFileSync(join(bin, "code-insiders"), "#!/bin/sh\n", { mode: 0o755 });
       process.env.PATH = bin;
       expect(vscodeInstalled(home)).toBe(true);
-    } finally { process.env.PATH = savedPath; }
+    } finally { process.env.PATH = savedPath; appPaths.mockRestore(); }
+  });
+
+  it("detects VS Code at a fixed install location with nothing on PATH", () => {
+    const savedPath = process.env.PATH;
+    process.env.PATH = "";
+    const app = join(home, "opt/visual-studio-code/code");
+    mkdirSync(dirname(app), { recursive: true });
+    writeFileSync(app, "#!/bin/sh\n", { mode: 0o755 });
+    const appPaths = vi.spyOn(vscodeProbe, "appPaths").mockReturnValue([join(home, "missing/code"), app]);
+    try {
+      expect(vscodeInstalled(home, "linux")).toBe(true);
+      expect(appPaths).toHaveBeenCalledWith(home, "linux");
+    } finally { process.env.PATH = savedPath; appPaths.mockRestore(); }
+    expect(vscodeProbe.appPaths(home, "linux")).toEqual(["/usr/share/code/code", "/opt/visual-studio-code/code"]);
   });
 
   it("never overwrites an invalid config or creates a backup for it", async () => {

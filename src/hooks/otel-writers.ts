@@ -28,6 +28,24 @@ export function agentConfigPath(agent: OtelAgent, home = homedir()): string {
     resolve(home, `.${agent}`, agent === "codex" ? "config.toml" : "settings.json");
 }
 
+/**
+ * Fixed install locations checked after PATH. A mutable seam so tests can run
+ * on a machine that really has VS Code installed: these paths are system-wide,
+ * so no temp HOME or PATH hides them.
+ */
+export const vscodeProbe = {
+  appPaths(home: string, platform: NodeJS.Platform): string[] {
+    return platform === "darwin" ? [
+      "/Applications/Visual Studio Code.app/Contents/MacOS/Electron",
+      "/Applications/Visual Studio Code - Insiders.app/Contents/MacOS/Electron",
+      resolve(home, "Applications/Visual Studio Code.app/Contents/MacOS/Electron"),
+    ] : platform === "win32" ? [
+      resolve(process.env.LOCALAPPDATA ?? resolve(home, "AppData/Local"), "Programs/Microsoft VS Code/Code.exe"),
+      resolve(process.env.ProgramFiles ?? "C:/Program Files", "Microsoft VS Code/Code.exe"),
+    ] : ["/usr/share/code/code", "/opt/visual-studio-code/code"];
+  },
+};
+
 export function vscodeInstalled(home = homedir(), platform = process.platform): boolean {
   const executable = (path: string) => {
     try {
@@ -38,15 +56,7 @@ export function vscodeInstalled(home = homedir(), platform = process.platform): 
   const names = platform === "win32" ? ["code.cmd", "code-insiders.cmd", "Code.exe", "Code - Insiders.exe"] : ["code", "code-insiders"];
   if ((process.env.PATH ?? "").split(platform === "win32" ? ";" : ":")
     .some(dir => names.some(name => executable(resolve(dir, name))))) return true;
-  const apps = platform === "darwin" ? [
-    "/Applications/Visual Studio Code.app/Contents/MacOS/Electron",
-    "/Applications/Visual Studio Code - Insiders.app/Contents/MacOS/Electron",
-    resolve(home, "Applications/Visual Studio Code.app/Contents/MacOS/Electron"),
-  ] : platform === "win32" ? [
-    resolve(process.env.LOCALAPPDATA ?? resolve(home, "AppData/Local"), "Programs/Microsoft VS Code/Code.exe"),
-    resolve(process.env.ProgramFiles ?? "C:/Program Files", "Microsoft VS Code/Code.exe"),
-  ] : ["/usr/share/code/code", "/opt/visual-studio-code/code"];
-  if (apps.some(executable)) return true;
+  if (vscodeProbe.appPaths(home, platform).some(executable)) return true;
   return [".vscode", ".vscode-insiders"].some(folder => {
     try {
       return readdirSync(resolve(home, folder, "extensions"), { withFileTypes: true })
